@@ -59,26 +59,70 @@ Structured JSON Output (API Response)
 
 ## Getting Started (Local Setup)
 
+---
+
+````md
+## Getting Started (Local Setup)
+
 ### 1. Clone the Repository
 ```bash
 git clone https://github.com/Daivik2605/presentation-understanding-engine.git
 cd presentation-understanding-engine
+````
 
-2. Create and Activate Virtual Environment
+### 2. Create and Activate Virtual Environment
+
+```bash
 python3 -m venv venv
 source venv/bin/activate
+```
 
-3. Install Dependencies
+### 3. Install Dependencies
+
+```bash
 pip install -r requirements.txt
+```
 
-4. Start Ollama
+### 4. Start Ollama
+
+```bash
 ollama serve
+```
 
+Ensure the required model (e.g., `llama3:8b`) is available in Ollama.
 
-Ensure the required model (e.g., llama3:8b) is available in Ollama.
+### 5. Run the API Server
 
-5. Run the API Server
+```bash
 uvicorn app.main:app --reload
+```
 
-6. Open Swagger UI
+### 6. Open Swagger UI
+
+```
 http://127.0.0.1:8000/docs
+```
+
+````
+
+---
+
+## Why this fixes it
+
+- Closed all code blocks correctly
+- Removed stray `'''`
+- Ensured numbering renders properly
+- Ensured GitHub Markdown compatibility
+
+---
+
+## Next step
+
+After replacing this section:
+
+```bash
+git add README.md
+git commit -m "Fix README setup instructions formatting"
+git push
+````
+

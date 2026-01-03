@@ -58,14 +58,10 @@ Structured JSON Output (API Response)
 ---
 
 ## Getting Started (Local Setup)
-
+### 1. Clone the Repository
 ---
 
 ````md
-## Getting Started (Local Setup)
-
-### 1. Clone the Repository
-```bash
 git clone https://github.com/Daivik2605/presentation-understanding-engine.git
 cd presentation-understanding-engine
 ````

@@ -7,13 +7,22 @@ llm = OllamaLLM(
 )
 
 prompt = PromptTemplate(
-    input_variables=["slide_text"],
+    input_variables=["slide_text", "language"],
     template="""
-You are an experienced teacher.
+    You are an experienced teacher.
 
-Explain the following slide content clearly in a natural teaching tone.
-Do not repeat the text verbatim.
-Keep it concise and easy to understand.
+TASK:
+Explain the slide content as spoken narration.
+
+IMPORTANT RULES:
+- Generate narration ONLY
+- Do NOT ask questions
+- Do NOT generate quizzes
+- Do NOT generate JSON
+- Do NOT mention "questions" or "MCQs"
+- Generate the narration in the following language: {language}
+- Use a natural teaching tone
+- Do not repeat text verbatim
 
 Slide content:
 {slide_text}

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query, Form
 from app.services.ppt_processor import process_ppt
+from app.services.ppt_video_processor import process_ppt_to_video
 
 router = APIRouter()
 
@@ -47,4 +48,29 @@ async def process_ppt_endpoint(
         "filename": file.filename,
         "language": language,
         "slides": results
+    }
+
+@router.post("/process-ppt-video")
+async def process_ppt_video_endpoint(
+    file: UploadFile = File(...),
+    language: str = Form("en"),
+    max_slides: int = Query(default=5, ge=1, le=10),
+):
+    if not file.filename.endswith(".pptx"):
+        raise HTTPException(status_code=400, detail="Only .pptx files are allowed")
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Empty file uploaded")
+
+    temp_path = f"/tmp/{file.filename}"
+    with open(temp_path, "wb") as f:
+        f.write(contents)
+
+    result = process_ppt_to_video(temp_path, language=language, max_slides=max_slides)
+
+    return {
+        "filename": file.filename,
+        "language": language,
+        **result
     }

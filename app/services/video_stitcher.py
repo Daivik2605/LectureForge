@@ -2,29 +2,33 @@ import subprocess
 import uuid
 from pathlib import Path
 
-VIDEO_DIR = Path("data/videos")
-VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+FINAL_DIR = Path("data/final_videos")
+FINAL_DIR.mkdir(parents=True, exist_ok=True)
 
 def stitch_videos(video_paths: list[str]) -> str:
-    if len(video_paths) == 1:
-        return video_paths[0]
-
-    list_file = VIDEO_DIR / f"{uuid.uuid4()}.txt"
-    output_video = VIDEO_DIR / f"{uuid.uuid4()}.mp4"
-
-    # Create concat file
-    with open(list_file, "w") as f:
+    concat_file = FINAL_DIR / "clips.txt"
+    
+    # Ensure clips.txt is empty before writing
+    concat_file.write_text("", encoding="utf-8")
+    with open(concat_file, "w", encoding="utf-8") as f:
         for path in video_paths:
-            f.write(f"file '{Path(path).absolute()}'\n")
+            abs_path = Path(path).resolve()
+            f.write(f"file '{abs_path}'\n")
 
-    # Run ffmpeg concat
+    with open(concat_file, "w") as f:
+        for path in video_paths:
+            f.write(f"file '{Path(path).resolve()}'\n")
+
+    output = FINAL_DIR / f"{uuid.uuid4()}.mp4"
+
     subprocess.run([
-        "ffmpeg", "-y",
+        "ffmpeg",
+        "-y",
         "-f", "concat",
         "-safe", "0",
-        "-i", str(list_file),
+        "-i", str(concat_file),
         "-c", "copy",
-        str(output_video)
+        str(output)
     ], check=True)
-    print("Final video path:", output_path)
-    return str(output_video)
+
+    return str(output)

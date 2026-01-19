@@ -45,3 +45,4 @@ python-dotenv>=1.0.0
 # ===================
 # redis>=5.0.0
 # aioredis>=2.0.0
+langchain-ollama

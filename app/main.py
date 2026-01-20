@@ -120,3 +120,6 @@ data_dir = Path("data")
 if data_dir.exists():
     app.mount("/data", StaticFiles(directory="data"), name="data")
 
+storage_dir = Path("storage")
+if storage_dir.exists():
+    app.mount("/storage", StaticFiles(directory="storage"), name="storage")

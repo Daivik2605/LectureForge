@@ -25,7 +25,7 @@ export function DropZone({ file, onFileSelect, onFileRemove }: DropZoneProps) {
         if (rejection.errors[0]?.code === 'file-too-large') {
           setError('File is too large. Maximum size is 50MB.');
         } else if (rejection.errors[0]?.code === 'file-invalid-type') {
-          setError('Invalid file type. Please upload a .ppt or .pptx file.');
+          setError('Invalid file type. Please upload a .ppt, .pptx, .pdf, or .txt file.');
         } else {
           setError('Invalid file.');
         }
@@ -45,6 +45,8 @@ export function DropZone({ file, onFileSelect, onFileRemove }: DropZoneProps) {
       'application/vnd.ms-powerpoint': ['.ppt'],
       'application/vnd.openxmlformats-officedocument.presentationml.presentation':
         ['.pptx'],
+      'application/pdf': ['.pdf'],
+      'text/plain': ['.txt'],
     },
     maxFiles: 1,
     maxSize: 50 * 1024 * 1024, // 50MB
@@ -94,13 +96,13 @@ export function DropZone({ file, onFileSelect, onFileRemove }: DropZoneProps) {
           )}
         />
         <p className="text-lg font-medium mb-1">
-          {isDragActive ? 'Drop your file here' : 'Drag & drop your PowerPoint'}
+          {isDragActive ? 'Drop your file here' : 'Drag & drop your file'}
         </p>
         <p className="text-sm text-muted-foreground mb-4">
           or click to browse files
         </p>
         <p className="text-xs text-muted-foreground">
-          Supports .ppt and .pptx files up to 50MB
+          Supported formats: PPT, PPTX (presentations) • PDF, TXT (policy documents)
         </p>
       </div>
       {error && (

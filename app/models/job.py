@@ -5,7 +5,7 @@ Pydantic models for job management and API responses.
 from datetime import datetime
 from enum import Enum
 from typing import Optional, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 class JobState(str, Enum):
@@ -47,6 +47,8 @@ class SlideResult(BaseModel):
     slide_number: int
     text: str
     has_text: bool
+    title: Optional[str] = None
+    bullets: Optional[list[str]] = None
     narration: Optional[str] = None
     qa: Optional[dict[str, list[MCQuestion]]] = None
     audio_path: Optional[str] = None
@@ -89,11 +91,30 @@ class JobResult(BaseModel):
     status: JobState
     filename: str
     language: str
+    mode: str = "ppt"
     slides: list[SlideResult] = []
     final_video_path: Optional[str] = None
     processing_time_seconds: Optional[float] = None
+    cache_hits: int = 0
+    cache_misses: int = 0
     created_at: datetime
     completed_at: Optional[datetime] = None
+
+    @computed_field
+    def jobId(self) -> str:  # noqa: N802
+        return self.job_id
+
+    @computed_field
+    def durationSeconds(self) -> Optional[float]:  # noqa: N802
+        return self.processing_time_seconds
+
+    @computed_field
+    def cacheHits(self) -> int:  # noqa: N802
+        return self.cache_hits
+
+    @computed_field
+    def cacheMisses(self) -> int:  # noqa: N802
+        return self.cache_misses
 
 
 class JobSummary(BaseModel):

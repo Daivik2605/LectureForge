@@ -21,6 +21,17 @@ export default function UploadPage() {
   const [generateVideo, setGenerateVideo] = useState(true);
   const [generateMcqs, setGenerateMcqs] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
+  const [mode, setMode] = useState<'ppt' | 'policy'>('ppt');
+
+  const handleFileSelect = (selected: File) => {
+    setFile(selected);
+    const extension = selected.name.split('.').pop()?.toLowerCase();
+    if (extension === 'pdf' || extension === 'txt') {
+      setMode('policy');
+    } else {
+      setMode('ppt');
+    }
+  };
 
   const handleSubmit = async () => {
     if (!file) {
@@ -34,6 +45,7 @@ export default function UploadPage() {
       const result = await uploadPresentation({
         file,
         language: language as 'en' | 'fr' | 'hi',
+        mode,
         maxSlides,
         generateVideo,
         generateMcqs,
@@ -43,7 +55,7 @@ export default function UploadPage() {
       router.push(`/processing/${result.job_id}`);
     } catch (error: any) {
       console.error('Upload error:', error);
-      toast.error(error.response?.data?.detail || 'Upload failed');
+      toast.error(error?.message || 'Upload failed');
     } finally {
       setIsUploading(false);
     }
@@ -67,7 +79,7 @@ export default function UploadPage() {
             {/* File Drop Zone */}
             <DropZone
               file={file}
-              onFileSelect={setFile}
+              onFileSelect={handleFileSelect}
               onFileRemove={() => setFile(null)}
             />
 

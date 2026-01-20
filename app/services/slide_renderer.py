@@ -7,7 +7,6 @@ IMAGE_DIR = Path("data/images")
 IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 WIDTH, HEIGHT = 1280, 720
-MARGIN_X, MARGIN_Y = 80, 80
 MAX_CHARS_PER_LINE = 60
 
 def render_slide_image(text: str) -> str:
@@ -22,11 +21,13 @@ def render_slide_image(text: str) -> str:
     wrapped_text = textwrap.fill(text, width=MAX_CHARS_PER_LINE)
 
     draw.multiline_text(
-        (MARGIN_X, MARGIN_Y),
+        (WIDTH / 2, HEIGHT / 2),
         wrapped_text,
         fill="black",
         font=font,
-        spacing=10
+        spacing=10,
+        align="center",
+        anchor="mm",
     )
 
     path = IMAGE_DIR / f"{uuid.uuid4()}.png"

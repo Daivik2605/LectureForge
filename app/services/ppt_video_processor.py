@@ -1,6 +1,6 @@
 from typing import Dict, List
 from app.services.ppt_parser import parse_ppt
-from app.services.narration_chain import narration_chain
+from app.services.narration_chain import generate_narration_sync
 
 from app.services.slide_renderer import render_slide_image
 from app.services.tts_service import synthesize_speech  # you created this
@@ -16,12 +16,7 @@ def process_ppt_to_video(ppt_path: str, language: str = "en", max_slides: int = 
     for slide in slides:
         slide_text = slide["text"]
 
-        narration = str(
-            narration_chain.invoke({
-                "slide_text": slide_text,
-                "language": language
-            })
-        )
+        narration = generate_narration_sync(slide_text, language)
 
         image_path = render_slide_image(slide_text)
         audio_path = synthesize_speech(text=narration, language=language)

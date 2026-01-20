@@ -33,7 +33,7 @@ FFMPEG = get_ffmpeg_path()
 FINAL_DIR = Path("data/final_videos")
 FINAL_DIR.mkdir(parents=True, exist_ok=True)
 
-def stitch_videos(video_paths: list[str]) -> str:
+def stitch_videos(video_paths: list[str], output_path: str | None = None) -> str:
     """
     Stitch multiple video files into a single video.
     Uses FFmpeg concat demuxer with re-encoding for compatibility.
@@ -42,6 +42,11 @@ def stitch_videos(video_paths: list[str]) -> str:
         raise ValueError("No video paths provided for stitching")
     
     if len(video_paths) == 1:
+        if output_path:
+            output = Path(output_path)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(video_paths[0], output)
+            return str(output)
         return video_paths[0]
     
     # Validate all video files exist
@@ -50,7 +55,8 @@ def stitch_videos(video_paths: list[str]) -> str:
             raise FileNotFoundError(f"Video file not found: {path}")
     
     concat_file = FINAL_DIR / f"clips_{uuid.uuid4().hex[:8]}.txt"
-    output = FINAL_DIR / f"final_{uuid.uuid4().hex[:8]}.mp4"
+    output = Path(output_path) if output_path else FINAL_DIR / f"final_{uuid.uuid4().hex[:8]}.mp4"
+    output.parent.mkdir(parents=True, exist_ok=True)
     
     # Write concat file with proper escaping for Windows paths
     with open(concat_file, "w", encoding="utf-8") as f:

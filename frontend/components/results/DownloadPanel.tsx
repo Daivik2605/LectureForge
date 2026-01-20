@@ -19,9 +19,12 @@ interface DownloadItem {
 }
 
 export function DownloadPanel({ result }: DownloadPanelProps) {
-  const hasVideo = !!result.final_video_path;
+  const resolvedVideoPath = result.final_video_path || result.finalVideoPath;
+  const hasVideo = !!resolvedVideoPath;
   const hasAudio = result.slides.some((s) => s.audio_path);
-  const hasMcqs = result.slides.some((s) => s.mcqs && s.mcqs.length > 0);
+  const hasMcqs = result.slides.some(
+    (s) => s.qa && ((s.qa.easy?.length || 0) + (s.qa.medium?.length || 0) + (s.qa.hard?.length || 0)) > 0
+  );
 
   const downloadItems: DownloadItem[] = [
     {
@@ -36,7 +39,7 @@ export function DownloadPanel({ result }: DownloadPanelProps) {
       label: 'All Audio Files',
       description: 'ZIP archive of individual narration audio',
       icon: FileAudio,
-      available: hasAudio,
+      available: false,
     },
     {
       type: 'narrations',
@@ -63,7 +66,30 @@ export function DownloadPanel({ result }: DownloadPanelProps) {
 
   const handleDownload = async (fileType: string, filename: string) => {
     try {
-      const blob = await downloadFile(result.job_id, fileType);
+      let blob: Blob;
+      if (fileType === 'video' && resolvedVideoPath) {
+        blob = await downloadFile(resolvedVideoPath);
+      } else if (fileType === 'narrations') {
+        const narrations = result.slides
+          .map((slide) => `Slide ${slide.slide_number}\n${slide.narration || ''}`)
+          .join('\n\n');
+        blob = new Blob([narrations], { type: 'text/plain' });
+      } else if (fileType === 'mcqs_json') {
+        const mcqs = result.slides.map((slide) => ({
+          slide_number: slide.slide_number,
+          qa: slide.qa || {},
+        }));
+        blob = new Blob([JSON.stringify(mcqs, null, 2)], { type: 'application/json' });
+      } else if (fileType === 'summary') {
+        blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
+      } else if (fileType === 'audio_zip' && hasAudio) {
+        const audioPaths = result.slides
+          .map((slide) => slide.audio_path)
+          .filter(Boolean);
+        blob = new Blob([JSON.stringify(audioPaths, null, 2)], { type: 'application/json' });
+      } else {
+        return;
+      }
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

@@ -24,6 +24,7 @@ async def process_ppt_async_endpoint(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     language: str = Form("en"),
+    mode: str = Form("auto"),
     max_slides: int = Form(default=5),
     generate_video: bool = Form(default=True),
     generate_mcqs: bool = Form(default=True),
@@ -40,29 +41,27 @@ async def process_ppt_async_endpoint(
             status_code=400,
             detail=f"Language must be one of: {', '.join(SUPPORTED_LANGUAGES)}"
         )
-    
-    # Validate file type
-    if not file.filename.endswith((".pptx", ".ppt")):
+
+    allowed_extensions = {
+        "ppt": (".ppt", ".pptx"),
+        "pdf": (".pdf",),
+        "policy": (".pdf", ".txt"),
+        "auto": (".ppt", ".pptx", ".pdf", ".txt"),
+    }
+    if mode not in allowed_extensions:
         raise HTTPException(
             status_code=400,
-            detail="Only .ppt and .pptx files are allowed"
+            detail="Mode must be one of: ppt, pdf, policy, auto"
         )
-    
-    contents = await file.read()
-    if not contents:
-        raise HTTPException(status_code=400, detail="Empty file uploaded")
-    
-    # Check file size
-    if len(contents) > settings.max_file_size_mb * 1024 * 1024:
+
+    filename = file.filename or ""
+    suffix = Path(filename).suffix.lower()
+    if suffix not in allowed_extensions[mode]:
+        allowed_list = ", ".join(allowed_extensions[mode])
         raise HTTPException(
             status_code=400,
-            detail=f"File too large. Maximum size is {settings.max_file_size_mb}MB"
+            detail=f"Invalid file type for mode={mode}. Allowed: {allowed_list}"
         )
-    
-    # Save file
-    temp_path = UPLOAD_DIR / file.filename
-    with open(temp_path, "wb") as f:
-        f.write(contents)
     
     # Create job with all required parameters
     try:
@@ -77,6 +76,22 @@ async def process_ppt_async_endpoint(
     except Exception as e:
         logger.error(f"Failed to create job: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to create job: {str(e)}")
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Empty file uploaded")
+
+    # Check file size
+    if len(contents) > settings.max_file_size_mb * 1024 * 1024:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum size is {settings.max_file_size_mb}MB"
+        )
+
+    # Save file
+    temp_path = UPLOAD_DIR / file.filename
+    with open(temp_path, "wb") as f:
+        f.write(contents)
     
     # Start background processing
     background_tasks.add_task(
@@ -84,6 +99,7 @@ async def process_ppt_async_endpoint(
         job_id=job_id,
         ppt_path=str(temp_path),
         language=language,
+        mode=mode,
         max_slides=max_slides,
         generate_video=generate_video,
         generate_mcqs=generate_mcqs,
@@ -107,13 +123,6 @@ async def process_ppt_endpoint(
         raise HTTPException(
             status_code=400,
             detail="language must be one of: en, fr, hi"
-        )
-
-    # Validate file type
-    if not file.filename.endswith(".pptx"):
-        raise HTTPException(
-            status_code=400,
-            detail="Only .pptx files are allowed"
         )
 
     contents = await file.read()
@@ -146,9 +155,6 @@ async def process_ppt_video_endpoint(
     language: str = Form("en"),
     max_slides: int = Query(default=5, ge=1, le=10),
 ):
-    if not file.filename.endswith(".pptx"):
-        raise HTTPException(status_code=400, detail="Only .pptx files are allowed")
-
     contents = await file.read()
     if not contents:
         raise HTTPException(status_code=400, detail="Empty file uploaded")

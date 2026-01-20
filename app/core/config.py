@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     # LLM Settings (Ollama)
     # ===================
     ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "llama3.1:8b"
+    ollama_model: str = "llama3.1:8b-instruct-q4"
     narration_temperature: float = 0.4
     qa_temperature: float = 0.3
     llm_timeout: int = 120  # seconds
@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     # ===================
     # TTS Settings (Edge-TTS)
     # ===================
-    tts_voice_en: str = "en-US-AriaNeural"
+    tts_voice_en: str = "en-US-GuyNeural"
     tts_voice_fr: str = "fr-FR-DeniseNeural"
     tts_voice_hi: str = "hi-IN-SwaraNeural"
     tts_rate: str = "+0%"  # Speech rate adjustment
@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     image_dir: Path = Path("data/images")
     video_dir: Path = Path("data/videos")
     final_video_dir: Path = Path("data/final_videos")
+    narration_cache_dir: Path = Path("data/cache/narrations")
     
     # ===================
     # Processing Limits
@@ -77,6 +78,13 @@ class Settings(BaseSettings):
     max_file_size_mb: int = 50
     max_concurrent_jobs: int = 3
     job_timeout_minutes: int = 30
+    narration_batch_size: int = 5
+    llm_concurrency: int = 2
+    tts_concurrency: int = 3
+    render_concurrency: int = 3
+    video_concurrency: int = 3
+    narration_min_words: int = 15
+    narration_max_words: int = 300
     
     # ===================
     # File Cleanup
@@ -121,6 +129,7 @@ class Settings(BaseSettings):
             self.image_dir,
             self.video_dir,
             self.final_video_dir,
+            self.narration_cache_dir,
         ]:
             dir_path.mkdir(parents=True, exist_ok=True)
 

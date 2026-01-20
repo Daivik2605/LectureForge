@@ -4,11 +4,12 @@ import sys
 import shutil
 from pathlib import Path
 
+from app.core.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-AUDIO_DIR = Path("data/audio")
+AUDIO_DIR = settings.audio_dir
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -26,13 +27,7 @@ def synthesize_speech(text: str, language: str) -> str:
 
     audio_path = AUDIO_DIR / f"{uuid.uuid4()}.mp3"
 
-    voice_map = {
-        "en": "en-US-AriaNeural",
-        "fr": "fr-FR-DeniseNeural",
-        "hi": "hi-IN-SwaraNeural"
-    }
-
-    voice = voice_map.get(language, "en-US-AriaNeural")
+    voice = settings.get_voice_for_language(language)
     
     logger.info(f"Synthesizing speech: voice={voice}, text_length={len(text)}")
 

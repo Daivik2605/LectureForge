@@ -13,6 +13,7 @@ export function useJobStatus(jobId: string): UseJobStatusReturn {
   const { data, isLoading, error } = useQuery({
     queryKey: ['jobStatus', jobId],
     queryFn: () => getJobStatus(jobId),
+    retry: false,
     refetchInterval: (query) => {
       const status = query.state.data?.status;
       // Stop polling if job is complete or failed

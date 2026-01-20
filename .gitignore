@@ -69,6 +69,11 @@ logs/*
 # Old data directories
 data/uploads/
 data/results/
+data/audio/
+data/images/
+data/videos/
+data/final_videos/
+
 
 # Node.js / Frontend
 node_modules/
@@ -90,4 +95,74 @@ ssl/
 # OS files
 .DS_Store
 Thumbs.db
+
+
+## Client docs
+*.pdf
+*.ppt
+*.pptx
+# Olama models blobs
+*.gguf
+
+# ===============================
+# Python tooling
+# ===============================
+.mypy_cache/
+.pytype/
+.pyright/
+ruff_cache/
+pip-wheel-metadata/
+poetry.lock
+pdm.lock
+
+# ===============================
+# Frontend tooling
+# ===============================
+frontend/.turbo/
+frontend/.vercel/
+.vercel/
+*.log
+
+# ===============================
+# Media artifacts (extra safety)
+# ===============================
+*.mp3
+*.wav
+*.mp4
+*.mov
+*.avi
+*.webm
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# ===============================
+# Model & AI artifacts
+# ===============================
+models/
+checkpoints/
+embeddings/
+vectorstore/
+faiss/
+chroma/
+qdrant/
+
+# ===============================
+# Temporary & runtime
+# ===============================
+tmp/
+temp/
+runtime/
+.cache/
+.cache/*
+*.tmp
+
+# ===============================
+# macOS + Linux noise
+# ===============================
+.AppleDouble
+.LSOverride
+._*
+
 

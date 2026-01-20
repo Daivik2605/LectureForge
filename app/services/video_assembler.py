@@ -37,9 +37,10 @@ FFMPEG = get_ffmpeg_path()
 logger.info(f"Using FFmpeg: {FFMPEG}")
 
 
-def create_video(image_path: str, audio_path: str) -> str:
+def create_video(image_path: str, audio_path: str, output_path: str | None = None) -> str:
     """Create a video from an image and audio file."""
-    output = VIDEO_DIR / f"{uuid.uuid4()}.mp4"
+    output = Path(output_path) if output_path else VIDEO_DIR / f"{uuid.uuid4()}.mp4"
+    output.parent.mkdir(parents=True, exist_ok=True)
     
     logger.info(f"Creating video: image={image_path}, audio={audio_path}")
 

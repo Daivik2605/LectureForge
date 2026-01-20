@@ -22,7 +22,10 @@ export function VideoPlayer({ videoPath, slides }: VideoPlayerProps) {
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
 
-  if (!videoPath) {
+  const fallbackVideo = slides.find((slide) => slide.video_path)?.video_path;
+  const resolvedVideoPath = videoPath || fallbackVideo;
+
+  if (!resolvedVideoPath) {
     return (
       <Card>
         <CardContent className="py-10 text-center">
@@ -95,7 +98,7 @@ export function VideoPlayer({ videoPath, slides }: VideoPlayerProps) {
         <div className="aspect-video bg-black rounded-lg overflow-hidden">
           <video
             ref={videoRef}
-            src={getFileUrl(videoPath)}
+            src={getFileUrl(resolvedVideoPath)}
             className="w-full h-full"
             onTimeUpdate={handleTimeUpdate}
             onLoadedMetadata={handleLoadedMetadata}

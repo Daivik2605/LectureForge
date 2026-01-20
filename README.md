@@ -59,7 +59,7 @@ Designed for **EdTech**, **training automation**, and **instructional content pi
           ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Ollama LLM                               │
-│                    (llama3.1:8b or similar)                        │
+│               (llama3.1:8b-instruct-q4 or similar)                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -105,7 +105,7 @@ cd presentation-understanding-engine
 docker-compose up -d
 
 # Pull the LLM model (first time only)
-docker exec -it ppt-engine-ollama ollama pull llama3.1:8b
+docker exec -it ppt-engine-ollama ollama pull llama3.1:8b-instruct-q4
 ```
 
 The application will be available at:
@@ -141,7 +141,7 @@ cp .env.example .env    # Linux/Mac
 
 # Start Ollama and pull model
 ollama serve
-ollama pull llama3.1:8b
+ollama pull llama3.1:8b-instruct-q4
 
 # Run the backend
 uvicorn app.main:app --reload
@@ -167,6 +167,54 @@ npm run dev
 
 ## 📁 Project Structure
 
+```
+
+---
+
+## ⚙️ Performance & Local LLM Settings
+
+Required Ollama model:
+- `llama3.1:8b-instruct-q4`
+
+Environment overrides (defaults shown in `app/core/config.py`):
+- `OLLAMA_MODEL` (default `llama3.1:8b-instruct-q4`)
+- `OLLAMA_BASE_URL` (default `http://localhost:11434`)
+- `NARRATION_BATCH_SIZE` (default `5`)
+- `LLM_CONCURRENCY` (default `2`)
+- `TTS_CONCURRENCY` (default `3`)
+- `RENDER_CONCURRENCY` (default `3`)
+- `VIDEO_CONCURRENCY` (default `3`)
+- `NARRATION_MIN_WORDS` (default `15`)
+- `NARRATION_MAX_WORDS` (default `300`)
+
+Example:
+
+```bash
+export OLLAMA_MODEL=llama3.1:8b-instruct-q4
+export NARRATION_BATCH_SIZE=6
+export LLM_CONCURRENCY=1
+export TTS_CONCURRENCY=3
+```
+
+Pipeline selection:
+- `mode=ppt` for `.ppt/.pptx`
+- `mode=pdf` for `.pdf`
+- `mode=policy` for `.pdf/.txt` (policy pipeline)
+- `mode=auto` picks a pipeline based on file extension
+
+PDF processing:
+- One slide per page (no chunking)
+- Each page is summarized into bullet points with a short narration
+
+Caching:
+- Narration cache lives in `data/cache/narrations/`
+- Cache key = sha256(language + chunk text + pipeline type)
+- Invalidate by deleting the cache folder or changing the chunk text
+
+Quick perf check:
+
+```bash
+python scripts/dev_perf_test.py sample.pptx --max-slides 5
 ```
 presentation-understanding-engine/
 ├── app/
@@ -225,10 +273,18 @@ presentation-understanding-engine/
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
-| `OLLAMA_MODEL` | `llama3.1:8b` | LLM model to use |
-| `TTS_VOICE_EN` | `en-US-AriaNeural` | English TTS voice |
+| `OLLAMA_MODEL` | `llama3.1:8b-instruct-q4` | LLM model to use |
+| `NARRATION_BATCH_SIZE` | `5` | Slides per LLM narration batch |
+| `LLM_CONCURRENCY` | `2` | Max concurrent LLM calls |
+| `TTS_CONCURRENCY` | `3` | Max concurrent TTS calls |
+| `RENDER_CONCURRENCY` | `3` | Max concurrent slide renders |
+| `VIDEO_CONCURRENCY` | `3` | Max concurrent clip renders |
+| `NARRATION_MIN_WORDS` | `15` | Minimum words per narration |
+| `NARRATION_MAX_WORDS` | `300` | Maximum words per narration |
+| `TTS_VOICE_EN` | `en-US-GuyNeural` | English TTS voice |
 | `TTS_VOICE_FR` | `fr-FR-DeniseNeural` | French TTS voice |
 | `TTS_VOICE_HI` | `hi-IN-SwaraNeural` | Hindi TTS voice |
+| `NARRATION_CACHE_DIR` | `data/cache/narrations` | Narration cache directory |
 | `VIDEO_FPS` | `1` | Video frames per second |
 | `VIDEO_RESOLUTION` | `1920x1080` | Video resolution |
 | `MAX_SLIDES` | `20` | Maximum slides to process |
@@ -349,4 +405,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [Ollama](https://ollama.ai/) for local LLM inference
 - [shadcn/ui](https://ui.shadcn.com/) for beautiful components
 - [Microsoft Edge TTS](https://github.com/rany2/edge-tts) for neural voices
-

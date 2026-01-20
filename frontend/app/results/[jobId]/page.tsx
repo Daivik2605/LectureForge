@@ -86,7 +86,10 @@ export default function ResultsPage() {
           </TabsContent>
 
           <TabsContent value="video" className="mt-6">
-            <VideoPlayer videoPath={result.final_video_path} slides={result.slides} />
+            <VideoPlayer
+              videoPath={result.final_video_path || result.finalVideoPath}
+              slides={result.slides}
+            />
           </TabsContent>
 
           <TabsContent value="quiz" className="mt-6">

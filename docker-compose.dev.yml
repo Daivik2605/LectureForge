@@ -16,7 +16,7 @@ services:
   backend:
     build:
       context: .
-      dockerfile: Dockerfile.dev
+      dockerfile: backend/Dockerfile.dev
     container_name: ppt-engine-backend-dev
     ports:
       - "8000:8000"
@@ -27,9 +27,10 @@ services:
       - ENVIRONMENT=development
       - CORS_ORIGINS=http://localhost:3000
     volumes:
-      - ./app:/app/app
-      - ./storage:/app/storage
-      - ./logs:/app/logs
+      - ./backend/app:/app/backend/app
+      - ./data:/app/backend/data
+      - ./storage:/app/backend/storage
+      - ./logs:/app/backend/logs
     depends_on:
       - ollama
     restart: unless-stopped
@@ -43,7 +44,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_URL=http://backend:8000
     volumes:
       - ./frontend/app:/app/app
       - ./frontend/components:/app/components

@@ -27,6 +27,7 @@ export default function UploadPage() {
     setFile(selected);
     const extension = selected.name.split('.').pop()?.toLowerCase();
     if (extension === 'pdf' || extension === 'txt') {
+      // TODO: Confirm whether PDFs should use mode="pdf" (per-page summaries) or "policy" (chunked).
       setMode('policy');
     } else {
       setMode('ppt');

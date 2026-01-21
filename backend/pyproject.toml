@@ -1,0 +1,29 @@
+[project]
+name = "presentation-understanding-engine"
+version = "0.1.0"
+description = "Presentation Understanding Engine backend."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "edge-tts>=6.1.9",
+    "fastapi>=0.109.0",
+    "langchain-core>=0.1.0",
+    "langchain-ollama>=0.0.2",
+    "langdetect>=1.0.9",
+    "ollama>=0.1.0",
+    "pdfminer.six>=20231228",
+    "pillow>=10.2.0",
+    "pydantic-settings>=2.1.0",
+    "python-dotenv>=1.0.0",
+    "python-multipart>=0.0.6",
+    "python-pptx>=0.6.23",
+    "uvicorn[standard]>=0.27.0",
+    "websockets>=12.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]

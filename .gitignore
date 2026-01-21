@@ -60,6 +60,25 @@ storage/temp/*
 !storage/uploads/.gitkeep
 !storage/outputs/.gitkeep
 !storage/temp/.gitkeep
+backend/storage/*
+
+# Data directories
+data/uploads/*
+data/audio/*
+data/images/*
+data/videos/*
+data/final_videos/*
+data/cache/*
+data/cache/narrations/*
+!data/uploads/.gitkeep
+!data/audio/.gitkeep
+!data/images/.gitkeep
+!data/videos/.gitkeep
+!data/final_videos/.gitkeep
+!data/cache/.gitkeep
+!data/cache/narrations/.gitkeep
+backend/data/*
+backend/logs/*
 
 # Logs
 logs/*
@@ -67,12 +86,7 @@ logs/*
 *.log
 
 # Old data directories
-data/uploads/
 data/results/
-data/audio/
-data/images/
-data/videos/
-data/final_videos/
 
 
 # Node.js / Frontend
@@ -103,6 +117,11 @@ Thumbs.db
 *.pptx
 # Olama models blobs
 *.gguf
+
+# Allow curated samples
+!samples/*.pdf
+!samples/*.ppt
+!samples/*.pptx
 
 # ===============================
 # Python tooling
@@ -165,4 +184,7 @@ runtime/
 .LSOverride
 ._*
 
-
+# Documentation assets
+!docs/screenshots/*.png
+!docs/screenshots/*.jpg
+!docs/screenshots/*.jpeg

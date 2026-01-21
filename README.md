@@ -1,9 +1,18 @@
-# Presentation Understanding Engine  
+# LectureForge  
+[![CI](https://github.com/Daivik2605/LectureForge/actions/workflows/ci.yml/badge.svg)](https://github.com/Daivik2605/LectureForge/actions)
+[![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](https://github.com/Daivik2605/LectureForge/actions)
 *Turn slide decks and PDFs into narrated, lesson‑style videos with summaries and optional quizzes.*
 
 ## Overview
 
-Presentation Understanding Engine is a FastAPI + Next.js system that converts PPT/PPTX and PDF documents into narrated video lessons. It extracts slide/page content, produces summaries, generates narration using local TTS, and can optionally create quiz questions using a local or pluggable LLM.
+LectureForge is a FastAPI + Next.js system that converts PPT/PPTX and PDF documents into narrated video lessons. It extracts slide/page content, produces summaries, generates narration using local TTS, and can optionally create quiz questions using a local or pluggable LLM.
+
+## 🎥 Live Demo
+
+![Upload and generate interface](screenshots/upload-demo.png)
+![Results with narrated lesson preview](screenshots/results-demo.png)
+
+*(Add your actual screenshots here - upload → processing → narrated lesson output)*
 
 **Project status:** Early-stage but functional prototype, actively developed.
 
@@ -25,17 +34,20 @@ Presentation Understanding Engine is a FastAPI + Next.js system that converts PP
 
 ## Models & Configuration
 
-The engine is designed to work with pluggable LLM and TTS backends. You can run fully local processing or connect to external APIs depending on your environment, with local‑only processing as the default assumption.
+LectureForge works with pluggable local/cloud LLM + TTS backends:
 
-At a minimum, you should configure:
+**Required environment variables:**
+- `LLM_PROVIDER` – `local` or `openai_compatible`
+- `LLM_MODEL_PATH` – Local GGUF model path or API model name
+- `TTS_PROVIDER` – `local` or cloud TTS service
+- `TTS_VOICE` – Voice identifier
 
-- `LLM_PROVIDER` – Identifier for the LLM backend (e.g., `local`, `openai_compatible`).
-- `LLM_MODEL_PATH` or `LLM_MODEL_NAME` – Local path or model name, depending on provider.
-- `TTS_PROVIDER` – Identifier for the TTS backend.
-- `TTS_VOICE` – Voice or speaker ID to use.
-- `MAX_TOKENS`, `TEMPERATURE` – Optional generation parameters.
+**Hardware recommendations:**
+- CPU: 8GB+ RAM for small models
+- GPU: 12GB+ VRAM recommended for 7B+ models
+- Large decks (50+ slides): 30-60s processing time per slide
 
-See `.env.example` for the complete list of supported variables. For large decks or long documents, a higher‑end CPU and/or GPU is recommended for reasonable processing time.
+See `.env.example` for full configuration.
 
 ## Architecture
 
@@ -64,18 +76,21 @@ If FastAPI docs are enabled, the OpenAPI schema is available at `/docs` or `/red
 ## Project Structure
 
 ```text
-.
+LectureForge
 ├── backend/           # FastAPI application (API, services, LLM/TTS integration)
 ├── frontend/          # Next.js application (UI for upload and results)
-├── data/              # Intermediate runtime data (local dev only)
-├── docs/              # Architecture, configuration, and operational docs
+├── data/              # Data utilities or configuration
+├── docs/              # Additional documentation (architecture, API, etc.)
 ├── samples/           # Example PPT/PPTX and PDF files
-├── scripts/           # Helper scripts (dev, maintenance, profiling)
+├── scripts/           # Helper scripts (dev, maintenance, etc.)
 ├── storage/           # Generated artifacts (local dev only; gitignored)
 ├── logs/              # Log output (local dev only; gitignored)
-├── docker-compose.yml
+├── docker-compose.yml # Docker orchestration
+├── docker-compose.dev.yml
+├── nginx.conf
 ├── LICENSE
-└── README.md
+├── README.md
+└── ...other root files
 ```
 
 ## Getting Started
@@ -97,7 +112,7 @@ Optional:
 
 ```bash
 git clone <repo-url>
-cd Presentation-Understanding-Engine
+cd LectureForge
 ```
 
 Backend setup:

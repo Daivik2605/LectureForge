@@ -5,7 +5,7 @@ services:
   # Ollama LLM Service
   ollama:
     image: ollama/ollama:latest
-    container_name: ppt-engine-ollama-dev
+    container_name: lectureforge-ollama-dev
     ports:
       - "11434:11434"
     volumes:
@@ -17,7 +17,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile.dev
-    container_name: ppt-engine-backend-dev
+    container_name: lectureforge-backend-dev
     ports:
       - "8000:8000"
     environment:
@@ -40,7 +40,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile.dev
-    container_name: ppt-engine-frontend-dev
+    container_name: lectureforge-frontend-dev
     ports:
       - "3000:3000"
     environment:
@@ -60,4 +60,4 @@ volumes:
 
 networks:
   default:
-    name: ppt-engine-network-dev
+    name: lectureforge-network-dev

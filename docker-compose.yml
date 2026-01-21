@@ -4,7 +4,7 @@ services:
   # Ollama LLM Service
   ollama:
     image: ollama/ollama:latest
-    container_name: ppt-engine-ollama
+    container_name: lectureforge-ollama
     ports:
       - "11434:11434"
     volumes:
@@ -24,7 +24,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    container_name: ppt-engine-backend
+    container_name: lectureforge-backend
     ports:
       - "8000:8000"
     environment:
@@ -51,7 +51,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: ppt-engine-frontend
+    container_name: lectureforge-frontend
     ports:
       - "3000:3000"
     environment:
@@ -63,7 +63,7 @@ services:
   # Nginx Reverse Proxy (Optional - for production)
   nginx:
     image: nginx:alpine
-    container_name: ppt-engine-nginx
+    container_name: lectureforge-nginx
     ports:
       - "80:80"
       - "443:443"
@@ -82,4 +82,4 @@ volumes:
 
 networks:
   default:
-    name: ppt-engine-network
+    name: lectureforge-network

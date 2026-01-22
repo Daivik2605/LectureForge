@@ -12,7 +12,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Ignore backend / build libs only
+/backend/lib/
 lib64/
 parts/
 sdist/

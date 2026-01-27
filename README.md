@@ -1,6 +1,3 @@
-
-
-```markdown
 # LectureForge  
 [![CI](https://github.com/Daivik2605/LectureForge/actions/workflows/ci.yml/badge.svg)](https://github.com/Daivik2605/LectureForge/actions)
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](https://github.com/Daivik2605/LectureForge/actions)

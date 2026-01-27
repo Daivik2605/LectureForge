@@ -88,22 +88,31 @@ async def process_ppt_job(
 
         for slide in slides:
             slide_num = slide["slide_number"]
-            slide_text = slide["text"]
-            cache_key = build_cache_key(
-                language=language,
-                slide_text=slide_text,
-                pipeline_type="ppt",
-            )
-            cached = load_cached_narration(cache_key)
-            if cached:
-                job_logger.info(f"Narration cache hit for slide {slide_num}")
-                narrations[slide_num] = cached
-                cache_hits += 1
-                job_manager.update_slide_progress(job_id, slide_num, narration=SlideState.COMPLETED)
-            else:
-                slides_missing.append({**slide, "cache_key": cache_key})
-                cache_misses += 1
-                job_manager.update_slide_progress(job_id, slide_num, narration=SlideState.PROCESSING)
+            try:
+                slide_text = slide["text"]
+                cache_key = build_cache_key(
+                    language=language,
+                    slide_text=slide_text,
+                    pipeline_type="ppt",
+                )
+                cached = load_cached_narration(cache_key)
+                if cached:
+                    job_logger.info(f"Narration cache hit for slide {slide_num}")
+                    narrations[slide_num] = cached
+                    cache_hits += 1
+                    job_manager.update_slide_progress(job_id, slide_num, narration=SlideState.COMPLETED)
+                else:
+                    slides_missing.append({**slide, "cache_key": cache_key})
+                    cache_misses += 1
+                    job_manager.update_slide_progress(job_id, slide_num, narration=SlideState.PROCESSING)
+            except Exception as exc:
+                job_logger.error(
+                    "Slide extraction failed",
+                    extra={"job_id": job_id, "slide_number": slide_num, "error": str(exc)},
+                )
+                job_manager.update_slide_progress(
+                    job_id, slide_num, narration=SlideState.FAILED, error=str(exc)
+                )
 
         job_logger.info(
             "Narration cache summary",
@@ -216,15 +225,24 @@ async def process_ppt_job(
 
                 if generate_video and narration:
                     job_manager.update_slide_progress(job_id, slide_num, video=SlideState.PROCESSING)
-                    audio_task = asyncio.create_task(_run_tts(narration))
-                    image_task = asyncio.create_task(_run_render(slide_text))
-                    audio_path, image_path = await asyncio.gather(audio_task, image_task)
-                    slide_result.audio_path = audio_path
-                    slide_result.image_path = image_path
-                    video_path = await _run_video(image_path, audio_path)
-                    slide_result.video_path = video_path
-                    video_paths[slide_num] = video_path
-                    job_manager.update_slide_progress(job_id, slide_num, video=SlideState.COMPLETED)
+                    try:
+                        audio_task = asyncio.create_task(_run_tts(narration))
+                        image_task = asyncio.create_task(_run_render(slide_text))
+                        audio_path, image_path = await asyncio.gather(audio_task, image_task)
+                        slide_result.audio_path = audio_path
+                        slide_result.image_path = image_path
+                        video_path = await _run_video(image_path, audio_path)
+                        slide_result.video_path = video_path
+                        video_paths[slide_num] = video_path
+                        job_manager.update_slide_progress(job_id, slide_num, video=SlideState.COMPLETED)
+                    except Exception as exc:
+                        job_logger.error(
+                            "TTS/video generation failed",
+                            extra={"job_id": job_id, "slide_number": slide_num, "error": str(exc)},
+                        )
+                        job_manager.update_slide_progress(
+                            job_id, slide_num, video=SlideState.FAILED, error=str(exc)
+                        )
 
             except JobCancelledError:
                 raise

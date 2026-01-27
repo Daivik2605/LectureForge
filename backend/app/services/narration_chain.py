@@ -9,7 +9,12 @@ from langchain_core.prompts import PromptTemplate
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.exceptions import LLMConnectionError, LLMGenerationError
-from app.services.llm_service import chat_completion_async, chat_completion_sync
+from app.services.llm_service import (
+    chat_completion_async,
+    chat_completion_sync,
+    build_messages,
+    PROFESSOR_SYSTEM_PROMPT,
+)
 
 logger = get_logger(__name__)
 
@@ -30,6 +35,7 @@ IMPORTANT RULES:
 - Use a natural, engaging teaching tone
 - Explain concepts clearly without repeating text verbatim
 - Keep it concise but informative (<=300 words)
+- Include a brief narrative transition that connects to the next slide's idea
 
 Slide content:
 {slide_text}
@@ -55,6 +61,8 @@ IMPORTANT RULES:
 - Do NOT include extra keys
 - Do NOT include code fences, markdown, or commentary
 - Use language: {language}
+- Include a short narrative transition in each narration that leads into the next slide
+- For the final slide, include a concise wrap-up instead of a transition
 
 Slides:
 {slides_payload}
@@ -144,7 +152,7 @@ async def generate_narration_async(slide_text: str, language: str) -> str:
     try:
         prompt = NARRATION_PROMPT.format(slide_text=slide_text, language=language)
         result = await chat_completion_async(
-            [{"role": "user", "content": prompt}],
+            build_messages(prompt, system_prompt=PROFESSOR_SYSTEM_PROMPT),
             temperature=settings.narration_temperature,
         )
         
@@ -176,7 +184,7 @@ def generate_narration_sync(slide_text: str, language: str) -> str:
     try:
         prompt = NARRATION_PROMPT.format(slide_text=slide_text, language=language)
         result = chat_completion_sync(
-            [{"role": "user", "content": prompt}],
+            build_messages(prompt, system_prompt=PROFESSOR_SYSTEM_PROMPT),
             temperature=settings.narration_temperature,
         )
         
@@ -224,7 +232,7 @@ async def generate_narrations_batch(slides: list[dict], language: str) -> dict[i
             max_words=settings.narration_max_words,
         )
         result = await chat_completion_async(
-            [{"role": "user", "content": prompt}],
+            build_messages(prompt, system_prompt=PROFESSOR_SYSTEM_PROMPT),
             temperature=settings.narration_temperature,
         )
         parsed = _parse_batch_response(str(result))
@@ -242,7 +250,7 @@ async def generate_narrations_batch(slides: list[dict], language: str) -> dict[i
                 max_words=settings.narration_max_words,
             )
             result = await chat_completion_async(
-                [{"role": "user", "content": prompt}],
+                build_messages(prompt, system_prompt=PROFESSOR_SYSTEM_PROMPT),
                 temperature=settings.narration_temperature,
             )
             parsed = _parse_batch_response(str(result))

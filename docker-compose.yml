@@ -1,25 +1,17 @@
 version: '3.8'
 
 services:
-  # Ollama LLM Service
   ollama:
     image: ollama/ollama:latest
     container_name: lectureforge-ollama
     ports:
       - "11434:11434"
+    environment:
+      - OLLAMA_HOST=0.0.0.0 # Force Ollama to listen to the Docker network
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    # If no GPU, comment out the deploy section above
 
-  # FastAPI Backend
   backend:
     build:
       context: .
@@ -28,11 +20,12 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - OLLAMA_BASE_URL=http://ollama:11434
+      - PYTHONPATH=/app
+      - OLLAMA_BASE_URL=http://ollama:11434  # FIXED: Point to the service name 'ollama'
       - OLLAMA_MODEL=llama3.1:8b
       - LOG_LEVEL=INFO
       - ENVIRONMENT=production
-      - CORS_ORIGINS=http://localhost:3000,http://frontend:3000
+      - CORS_ORIGINS=["http://localhost:3000","http://frontend:3000"]
     volumes:
       - ./data:/app/backend/data
       - ./storage:/app/backend/storage
@@ -40,13 +33,7 @@ services:
     depends_on:
       - ollama
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
-  # Next.js Frontend
   frontend:
     build:
       context: ./frontend
@@ -55,27 +42,10 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://backend:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:8000 # For browser-side calls
     depends_on:
       - backend
     restart: unless-stopped
-
-  # Nginx Reverse Proxy (Optional - for production)
-  nginx:
-    image: nginx:alpine
-    container_name: lectureforge-nginx
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./ssl:/etc/nginx/ssl:ro
-    depends_on:
-      - backend
-      - frontend
-    restart: unless-stopped
-    profiles:
-      - production
 
 volumes:
   ollama_data:

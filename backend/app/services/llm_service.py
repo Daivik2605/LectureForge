@@ -24,6 +24,11 @@ logger = get_logger(__name__)
 DEFAULT_MAX_TOKENS = 2048
 DEFAULT_RETRY_ATTEMPTS = 3
 DEFAULT_RETRY_DELAY_SECONDS = 0.5
+PROFESSOR_SYSTEM_PROMPT = (
+    "You are a world-class university professor. "
+    "Teach with clarity, structure, and confidence. "
+    "Use narrative transitions so the lesson feels cohesive across slides."
+)
 
 
 def _get_llm_endpoint(base_url: str) -> tuple[str, bool]:
@@ -179,8 +184,16 @@ def chat_completion_sync(
     return _extract_chat_content(response.json(), is_openai)
 
 
-def _messages_from_prompt(prompt: str) -> list[dict[str, str]]:
-    return [{"role": "user", "content": prompt}]
+def _messages_from_prompt(prompt: str, system_prompt: str | None = None) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    return messages
+
+
+def build_messages(prompt: str, system_prompt: str | None = None) -> list[dict[str, str]]:
+    return _messages_from_prompt(prompt, system_prompt=system_prompt)
 
 
 SUMMARY_PROMPT = PromptTemplate(

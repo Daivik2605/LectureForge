@@ -1,7 +1,6 @@
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query, Form, BackgroundTasks
 from app.services.ppt_processor import process_ppt
-from app.services.ppt_video_processor import process_ppt_to_video
 from app.services.job_manager import job_manager
 from app.services.async_processor import run_processing_job
 from app.core.config import settings
@@ -149,6 +148,7 @@ async def process_ppt_endpoint(
 
 @router.post("/process-ppt-video")
 async def process_ppt_video_endpoint(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     language: str = Form("en"),
     max_slides: int = Query(default=5, ge=1, le=10),
@@ -161,10 +161,32 @@ async def process_ppt_video_endpoint(
     with open(temp_path, "wb") as f:
         f.write(contents)
 
-    result = process_ppt_to_video(str(temp_path), language=language, max_slides=max_slides)
+    try:
+        job_id = job_manager.create_job(
+            filename=file.filename,
+            language=language,
+            max_slides=max_slides,
+            generate_video=True,
+            generate_mcqs=False,
+        )
+        logger.info(f"Created job {job_id} for video generation: {file.filename}")
+    except Exception as e:
+        logger.error(f"Failed to create job: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create job: {str(e)}")
+
+    background_tasks.add_task(
+        run_processing_job,
+        job_id=job_id,
+        ppt_path=str(temp_path),
+        language=language,
+        mode="ppt",
+        max_slides=max_slides,
+        generate_video=True,
+        generate_mcqs=False,
+    )
 
     return {
-        "filename": file.filename,
-        "language": language,
-        **result
+        "job_id": job_id,
+        "status": "processing",
+        "message": f"Video processing started for {file.filename}"
     }

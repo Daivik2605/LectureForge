@@ -80,11 +80,18 @@ data/cache/narrations/*
 !data/cache/narrations/.gitkeep
 backend/data/*
 backend/logs/*
+backend/storage/*
+ollama_data/*
+ollama_storage/*
+
+
 
 # Logs
 logs/*
 !logs/.gitkeep
 *.log
+nginx/logs/
+nginx/certs/
 
 # Old data directories
 data/results/
@@ -189,3 +196,22 @@ runtime/
 !docs/screenshots/*.png
 !docs/screenshots/*.jpg
 !docs/screenshots/*.jpeg
+
+# Redis persistence
+dump.rdb
+appendonly.aof
+*.rdb
+redis_data/
+
+# Docker specific
+.docker/
+docker-compose.override.yml
+
+# Python dependency management (if you use them)
+.python-version
+.pdm-python
+.python-install-packages
+
+# Local storage edge cases
+backend/data/temp/
+backend/data/cache/

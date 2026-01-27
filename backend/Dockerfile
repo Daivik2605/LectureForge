@@ -1,7 +1,4 @@
-# Backend Dockerfile
 FROM python:3.11-slim
-
-WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -10,28 +7,21 @@ RUN apt-get update && apt-get install -y \
     fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
-COPY backend/requirements/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+# Set the working directory to where the 'app' folder will live
+WORKDIR /app
 
-# Copy application code
-COPY backend /app/backend
+# Copy the requirements and install them
+COPY backend/requirements/requirements.txt . 
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Create runtime directories
-RUN mkdir -p \
-    /app/backend/data/uploads \
-    /app/backend/data/audio \
-    /app/backend/data/images \
-    /app/backend/data/videos \
-    /app/backend/data/final_videos \
-    /app/backend/data/cache/narrations \
-    /app/backend/storage/uploads \
-    /app/backend/storage/outputs \
-    /app/backend/storage/temp \
-    /app/backend/logs
+# Copy the contents of your backend folder (which contains 'app') into /app
+# This places /app/app/... and /app/main.py in the correct spots
+COPY backend/ .
 
-# Expose port
+# Set PYTHONPATH to the current directory
+ENV PYTHONPATH=/app
+
 EXPOSE 8000
 
-# Run the application
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start uvicorn pointing to the main app module
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -87,7 +87,7 @@ export default function ResultsPage() {
 
           <TabsContent value="video" className="mt-6">
             <VideoPlayer
-              videoPath={result.final_video_path || result.finalVideoPath}
+              videoPath={(result.final_video_path || result.finalVideoPath) ?? undefined}
               slides={result.slides}
             />
           </TabsContent>

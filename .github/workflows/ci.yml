@@ -32,9 +32,10 @@ jobs:
         env:
           REDIS_URL: redis://localhost:6379/0
         run: |
-          # Adding $(pwd)/backend allows imports like 'from app.models' to work
-          # Adding $(pwd) allows imports like 'from backend.app' to work
+          # 1. Add both the project root AND the backend folder to PYTHONPATH
           export PYTHONPATH=$PYTHONPATH:$(pwd):$(pwd)/backend
+          
+          # 2. Run pytest while explicitly telling it where the root is
           pytest backend/tests
 
   frontend:

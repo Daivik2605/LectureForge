@@ -1,6 +1,21 @@
 // Look for this in frontend/lib/api.ts or similar
-export type JobStatus = 'Queued' | 'Processing' | 'Completed' | 'Failed' | string;
-  
+// Define the state as a separate type for reuse
+export type JobState = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'Queued';
+export type SlideState = 'pending' | 'processing' | 'completed' | 'failed';
+
+export interface JobStatus {
+  job_id: string;
+  status: JobState;
+  progress: number;
+  current_step: string;
+  max_slides: number;
+  generate_video: boolean;
+  generate_mcqs: boolean;
+  slides_progress: SlideProgress[];
+  error?: string; // Optional field for failed jobs
+  current_slide?: number;
+  total_slides?: number;
+}  
 export interface SlideProgress {
   slide_number: number;
   narration: SlideState;
@@ -31,20 +46,6 @@ export interface SlideResult {
   audio_path?: string | null;
   image_path?: string | null;
   video_path?: string | null;
-}
-
-export interface JobStatus {
-  job_id: string;
-  status: JobState;
-  progress: number;
-  current_slide?: number | null;
-  total_slides?: number | null;
-  current_step?: string | null;
-  slides_progress?: SlideProgress[];
-  error?: string | null;
-  created_at?: string;
-  updated_at?: string;
-  completed_at?: string | null;
 }
 
 export interface JobResult {

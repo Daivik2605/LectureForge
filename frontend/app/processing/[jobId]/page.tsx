@@ -26,15 +26,26 @@ export default function ProcessingPage() {
   const isJobNotLoaded = retryCount > 0 && !pollStatus && !wsStatus;
   
   // Merge WebSocket and polling status - prefer WS for real-time, poll for reliability
-// Merge status objects only if they exist
-  // Merge status objects by explicitly casting the sources to objects
-  const status = {
-    ...((pollStatus as object) || {}),
-    ...((wsStatus as object) || {}),
-    // Explicitly handle slides_progress with fallback
+  // FIX: Explicitly type status to resolve TS2339 'Property does not exist' errors
+  type StatusType = {
+    slides_progress: any[];
+    status: string;
+    progress: number;
+    error?: string;
+    current_step?: string;
+    current_slide?: number;
+    total_slides?: number;
+  };
+
+  const status: StatusType = {
+    // Explicitly handle all fields to ensure they exist on the merged object
     slides_progress: (wsStatus as any)?.slides_progress || (pollStatus as any)?.slides_progress || [],
     status: (wsStatus as any)?.status || (pollStatus as any)?.status || 'Queued',
     progress: (wsStatus as any)?.progress || (pollStatus as any)?.progress || 0,
+    error: (wsStatus as any)?.error || (pollStatus as any)?.error,
+    current_step: (wsStatus as any)?.current_step || (pollStatus as any)?.current_step,
+    current_slide: (wsStatus as any)?.current_slide || (pollStatus as any)?.current_slide,
+    total_slides: (wsStatus as any)?.total_slides || (pollStatus as any)?.total_slides,
   };
 
   // 2. Check completion - Updated to match Redis strings ('Completed' and 'Failed')

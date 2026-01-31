@@ -32,10 +32,10 @@ jobs:
         env:
           REDIS_URL: redis://localhost:6379/0
         run: |
-          # 1. Add the project root to PYTHONPATH
-          export PYTHONPATH=$PYTHONPATH:$(pwd)
-          # 2. Force pytest to run from the project root
-          pytest backend/tests --rootdir .
+          # Add both the root and the backend folder to PYTHONPATH
+          export PYTHONPATH=$PYTHONPATH:$(pwd):$(pwd)/backend
+          # Run from the project root
+          pytest backend/tests
 
   frontend:
     runs-on: ubuntu-latest

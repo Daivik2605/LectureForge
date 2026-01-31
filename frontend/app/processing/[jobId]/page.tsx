@@ -26,7 +26,7 @@ export default function ProcessingPage() {
   const isJobNotLoaded = retryCount > 0 && !pollStatus && !wsStatus;
   
   // Merge WebSocket and polling status - prefer WS for real-time, poll for reliability
-  // FIX: Explicitly type status to resolve TS2339 'Property does not exist' errors
+  // Merge status objects with explicit typing to resolve TS2339
   type StatusType = {
     slides_progress: any[];
     status: string;
@@ -38,7 +38,6 @@ export default function ProcessingPage() {
   };
 
   const status: StatusType = {
-    // Explicitly handle all fields to ensure they exist on the merged object
     slides_progress: (wsStatus as any)?.slides_progress || (pollStatus as any)?.slides_progress || [],
     status: (wsStatus as any)?.status || (pollStatus as any)?.status || 'Queued',
     progress: (wsStatus as any)?.progress || (pollStatus as any)?.progress || 0,

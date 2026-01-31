@@ -1,7 +1,16 @@
 // Look for this in frontend/lib/api.ts or similar
 // Define the state as a separate type for reuse
-export type JobState = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'Queued';
+// Match Redis/Backend casing exactly
+export type JobState = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'Completed' | 'Failed' | 'Queued';
 export type SlideState = 'pending' | 'processing' | 'completed' | 'failed';
+
+export interface SlideProgress {
+  slide_number: number;
+  narration: SlideState;
+  mcq: SlideState;
+  video: SlideState;
+  error?: string | null;
+}
 
 export interface JobStatus {
   job_id: string;
@@ -12,16 +21,9 @@ export interface JobStatus {
   generate_video: boolean;
   generate_mcqs: boolean;
   slides_progress: SlideProgress[];
-  error?: string; // Optional field for failed jobs
+  error?: string;
   current_slide?: number;
   total_slides?: number;
-}  
-export interface SlideProgress {
-  slide_number: number;
-  narration: SlideState;
-  mcq: SlideState;
-  video: SlideState;
-  error?: string | null;
 }
 
 export interface MCQ {

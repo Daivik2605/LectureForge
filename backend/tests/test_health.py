@@ -1,3 +1,5 @@
+import sys
+sys.path.append('backend')
 from fastapi.testclient import TestClient
 
 from backend.app.main import app

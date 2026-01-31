@@ -156,7 +156,7 @@ async def generate_narration_async(slide_text: str, language: str) -> str:
             temperature=settings.narration_temperature,
         )
         
-        narration = _postprocess_narration(str(result).strip())
+        narration = _postprocess_narration(str(result["text"]).strip())
         logger.debug(f"Generated narration: {len(narration)} chars")
         return narration
         
@@ -188,7 +188,7 @@ def generate_narration_sync(slide_text: str, language: str) -> str:
             temperature=settings.narration_temperature,
         )
         
-        narration = _postprocess_narration(str(result).strip())
+        narration = _postprocess_narration(str(result["text"]).strip())
         logger.debug(f"Generated narration: {len(narration)} chars")
         return narration
         
@@ -200,7 +200,7 @@ def generate_narration_sync(slide_text: str, language: str) -> str:
         raise LLMGenerationError("narration") from exc
 
 
-async def generate_narrations_batch(slides: list[dict], language: str) -> dict[int, str]:
+async def generate_narrations_batch(slides: list[dict], language: str) -> tuple[dict[int, str], dict[str, object]]:
     """
     Generate narrations for a batch of slides.
 
@@ -212,7 +212,7 @@ async def generate_narrations_batch(slides: list[dict], language: str) -> dict[i
         Mapping of slide_number to narration text
     """
     if not slides:
-        return {}
+        return {}, {"json_adherence": True, "llm_metrics": {}, "fallback_slide_numbers": []}
 
     slides_payload_parts = []
     for slide in slides:
@@ -235,7 +235,18 @@ async def generate_narrations_batch(slides: list[dict], language: str) -> dict[i
             build_messages(prompt, system_prompt=PROFESSOR_SYSTEM_PROMPT),
             temperature=settings.narration_temperature,
         )
-        parsed = _parse_batch_response(str(result))
+        parsed = _parse_batch_response(str(result["text"]))
+        batch_meta: dict[str, object] = {
+            "json_adherence": True,
+            "llm_metrics": {
+                "ttft": result.get("ttft"),
+                "tps": result.get("tps"),
+                "duration": result.get("duration"),
+                "memory_kb": result.get("memory_kb"),
+                "token_count": result.get("token_count"),
+            },
+            "fallback_slide_numbers": [],
+        }
     except Exception as exc:
         logger.warning(f"Batch narration parsing failed, retrying strictly: {exc}")
         try:
@@ -253,10 +264,22 @@ async def generate_narrations_batch(slides: list[dict], language: str) -> dict[i
                 build_messages(prompt, system_prompt=PROFESSOR_SYSTEM_PROMPT),
                 temperature=settings.narration_temperature,
             )
-            parsed = _parse_batch_response(str(result))
+            parsed = _parse_batch_response(str(result["text"]))
+            batch_meta = {
+                "json_adherence": False,
+                "llm_metrics": {
+                    "ttft": result.get("ttft"),
+                    "tps": result.get("tps"),
+                    "duration": result.get("duration"),
+                    "memory_kb": result.get("memory_kb"),
+                    "token_count": result.get("token_count"),
+                },
+                "fallback_slide_numbers": [],
+            }
         except Exception as retry_exc:
             logger.error(f"Batch narration retry failed: {retry_exc}")
             parsed = _fallback_message()
+            batch_meta = {"json_adherence": False, "llm_metrics": {}, "fallback_slide_numbers": []}
 
     results: dict[int, str] = {}
     missing_slides = []
@@ -277,5 +300,9 @@ async def generate_narrations_batch(slides: list[dict], language: str) -> dict[i
             slide_number = slide.get("slide_number")
             slide_text = slide.get("text", "")
             results[slide_number] = await generate_narration_async(slide_text, language)
+            batch_meta["fallback_slide_numbers"] = [
+                *batch_meta.get("fallback_slide_numbers", []),
+                slide_number,
+            ]
 
-    return results
+    return results, batch_meta

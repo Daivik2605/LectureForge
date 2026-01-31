@@ -2,6 +2,7 @@
 WebSocket endpoint for real-time job progress updates.
 """
 
+import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from datetime import datetime
 
@@ -74,21 +75,16 @@ async def job_progress_websocket(websocket: WebSocket, job_id: str):
     await manager.connect(websocket, job_id)
     
     # Send initial status
-    try:
-        status = job_manager.get_job_status(job_id)
-        await websocket.send_json({
-            "type": "connected",
-            "job_id": job_id,
-            "data": {
-                "status": status.status.value,
-                "progress": status.progress,
-                "current_slide": status.current_slide,
-                "total_slides": status.total_slides,
-                "current_step": status.current_step,
-            },
-            "timestamp": datetime.utcnow().isoformat(),
-        })
-    except JobNotFoundError:
+    status = None
+    for attempt in range(5):
+        try:
+            status = await job_manager.get_job_status(job_id)
+            break
+        except JobNotFoundError:
+            logger.info(f"WebSocket waiting for Job {job_id} to initialize (Attempt {attempt+1}/5).")
+            await asyncio.sleep(1)
+
+    if status is None:
         await websocket.send_json({
             "type": "error",
             "job_id": job_id,
@@ -97,35 +93,89 @@ async def job_progress_websocket(websocket: WebSocket, job_id: str):
         })
         await websocket.close()
         return
+
+    await websocket.send_json({
+        "type": "connected",
+        "job_id": job_id,
+        "data": {
+            "status": status.status.value,
+            "progress": status.progress,
+            "current_slide": status.current_slide,
+            "total_slides": status.total_slides,
+            "current_step": status.current_step,
+        },
+        "timestamp": datetime.utcnow().isoformat(),
+    })
     
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    stop_event = asyncio.Event()
+
     # Register callback for progress updates
     async def progress_callback(message: dict):
-        await manager.send_message(job_id, message)
-    
+        await queue.put(message)
+
     job_manager.subscribe(job_id, progress_callback)
+
+    async def subscriber_loop() -> None:
+        while not stop_event.is_set():
+            message = await queue.get()
+            await manager.send_message(job_id, message)
+
+    subscriber_task = asyncio.create_task(subscriber_loop())
+
+    async def heartbeat_loop() -> None:
+        while not stop_event.is_set():
+            await asyncio.sleep(15)
+            try:
+                await websocket.send_json({"type": "hb"})
+            except WebSocketDisconnect:
+                stop_event.set()
+                break
+            except Exception:
+                stop_event.set()
+                break
+
+    heartbeat_task = asyncio.create_task(heartbeat_loop())
     
     try:
         # Keep connection alive and handle client messages
         while True:
-            data = await websocket.receive_text()
+            receive_task = asyncio.create_task(websocket.receive_text())
+            done, pending = await asyncio.wait(
+                {receive_task},
+                timeout=15,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if receive_task in done:
+                try:
+                    data = receive_task.result()
+                except WebSocketDisconnect:
+                    raise
             
-            # Handle ping/pong for keepalive
-            if data == "ping":
-                await websocket.send_text("pong")
-            
-            # Handle cancel request
-            elif data == "cancel":
-                job_manager.cancel_job(job_id)
-                await websocket.send_json({
-                    "type": "cancelled",
-                    "job_id": job_id,
-                    "timestamp": datetime.utcnow().isoformat(),
-                })
+                # Handle ping/pong for keepalive
+                if data == "ping":
+                    await websocket.send_text("pong")
+                
+                # Handle cancel request
+                elif data == "cancel":
+                    await job_manager.cancel_job(job_id)
+                    await websocket.send_json({
+                        "type": "cancelled",
+                        "job_id": job_id,
+                        "timestamp": datetime.utcnow().isoformat(),
+                    })
+
+            for task in pending:
+                task.cancel()
     
     except WebSocketDisconnect:
         logger.info(f"Client disconnected from job {job_id}")
     except Exception as e:
         logger.error(f"WebSocket error for job {job_id}: {e}")
     finally:
+        stop_event.set()
+        subscriber_task.cancel()
+        heartbeat_task.cancel()
         job_manager.unsubscribe(job_id, progress_callback)
         manager.disconnect(websocket, job_id)

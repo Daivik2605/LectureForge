@@ -17,19 +17,29 @@ export default function ProcessingPage() {
   const jobId = params.jobId as string;
   
   const { status: pollStatus, isLoading, error } = useJobStatus(jobId);
-  const { status: wsStatus, isConnected } = useJobWebSocket(jobId);
+  const [wsRetry, setWsRetry] = useState(0);
+  const [wsRetrying, setWsRetrying] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const { status: wsStatus, isConnected, error: wsError } = useJobWebSocket(jobId, wsRetry);
+  const jobNotFoundRetryDelayMs = 2000;
+  const jobNotFoundMaxRetries = 3;
+  const isJobNotLoaded = retryCount > 0 && !pollStatus && !wsStatus;
   
   // Merge WebSocket and polling status - prefer WS for real-time, poll for reliability
+// Merge status objects only if they exist
+  // Merge status objects by explicitly casting the sources to objects
   const status = {
-    ...pollStatus,
-    ...wsStatus,
-    // Ensure slides_progress comes from the most recent source
-    slides_progress: wsStatus?.slides_progress || pollStatus?.slides_progress || [],
-  } as typeof pollStatus;
+    ...((pollStatus as object) || {}),
+    ...((wsStatus as object) || {}),
+    // Explicitly handle slides_progress with fallback
+    slides_progress: (wsStatus as any)?.slides_progress || (pollStatus as any)?.slides_progress || [],
+    status: (wsStatus as any)?.status || (pollStatus as any)?.status || 'Queued',
+    progress: (wsStatus as any)?.progress || (pollStatus as any)?.progress || 0,
+  };
 
-  // Check completion from either source
-  const isCompleted = pollStatus?.status === 'completed' || wsStatus?.status === 'completed';
-  const isFailed = pollStatus?.status === 'failed' || wsStatus?.status === 'failed';
+  // 2. Check completion - Updated to match Redis strings ('Completed' and 'Failed')
+  const isCompleted = status?.status === 'Completed' || status?.status === 'completed';
+  const isFailed = status?.status === 'Failed' || status?.status === 'failed';
 
   useEffect(() => {
     if (isCompleted) {
@@ -41,17 +51,43 @@ export default function ProcessingPage() {
     }
   }, [isCompleted, jobId, router]);
 
-  if (isLoading && !status) {
+  if (isLoading && !pollStatus && !wsStatus) {
     return (
       <div className="container mx-auto py-10 px-4">
-        <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center justify-center min-h-[400px] gap-3 text-muted-foreground">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <div className="text-sm">
+            {isJobNotLoaded ? (
+              <span className="inline-flex items-center gap-2">
+                Establishing connection... (Attempt {retryCount}/3)
+                <Loader2 className="h-4 w-4 animate-spin" />
+              </span>
+            ) : (
+              'Loading...'
+            )}
+          </div>
         </div>
       </div>
     );
   }
 
-  if (error) {
+  useEffect(() => {
+    if (!wsError) {
+      setWsRetrying(false);
+      return;
+    }
+    if (wsError.toLowerCase().includes('job not found') && wsRetry < jobNotFoundMaxRetries) {
+      setWsRetrying(true);
+      setRetryCount((prev) => Math.min(prev + 1, jobNotFoundMaxRetries));
+      const timer = setTimeout(() => {
+        setWsRetry((prev) => prev + 1);
+      }, jobNotFoundRetryDelayMs);
+      return () => clearTimeout(timer);
+    }
+    setWsRetrying(false);
+  }, [wsError, wsRetry]);
+
+  if (error && !wsRetrying) {
     return (
       <div className="container mx-auto py-10 px-4">
         <Card className="max-w-2xl mx-auto">
@@ -68,13 +104,22 @@ export default function ProcessingPage() {
     );
   }
 
-  if (isFailed) {
+  if (isFailed && !wsRetrying) {
     return (
       <div className="container mx-auto py-10 px-4">
         <Card className="max-w-2xl mx-auto">
           <CardContent className="py-10 text-center">
             <XCircle className="h-12 w-12 text-destructive mx-auto mb-4" />
-            <h2 className="text-xl font-semibold mb-2">Processing Failed</h2>
+            <h2 className="text-xl font-semibold mb-2">
+              {isJobNotLoaded ? (
+                <span className="inline-flex items-center gap-2">
+                  Establishing connection... (Attempt {retryCount}/3)
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                </span>
+              ) : (
+                'Processing Failed'
+              )}
+            </h2>
             <p className="text-muted-foreground mb-4">{status?.error || 'An error occurred'}</p>
             <Button onClick={() => router.push('/upload')}>
               Try Again
@@ -118,7 +163,7 @@ export default function ProcessingPage() {
               </div>
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-yellow-500'}`} />
-                {isConnected ? 'Live' : 'Polling'}
+                {wsRetrying ? 'Reconnecting' : isConnected ? 'Live' : 'Polling'}
               </div>
             </div>
           </CardHeader>

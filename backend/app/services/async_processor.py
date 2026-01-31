@@ -3,10 +3,11 @@ Async Processor - Dispatches processing pipelines based on mode/file type.
 """
 
 from datetime import datetime
+import json
 from pathlib import Path
 from app.core.exceptions import JobCancelledError
 from app.core.logging import get_logger
-from app.models.job import JobResult
+from app.models.job import JobResult, JobState
 from app.services.job_manager import job_manager
 from app.services.ppt_pipeline import process_ppt_job, process_ppt_sync
 from app.services.pdf_pipeline import process_pdf_job
@@ -50,6 +51,13 @@ async def run_processing_job(
     This is the entry point for background task execution.
     """
     try:
+        await job_manager.update_progress(
+            job_id=job_id,
+            progress=5,
+            current_step="Dispatching job",
+            status=JobState.PROCESSING.value,
+            extra_meta={"phase": "dispatch", "mode": mode},
+        )
         suffix = Path(ppt_path).suffix.lower()
         if mode == "auto":
             if suffix in {".pdf"}:
@@ -63,8 +71,14 @@ async def run_processing_job(
             from app.services.policy_pipeline import process_policy_job
 
             start_time = datetime.utcnow()
-            job_manager.start_processing(job_id, total_slides=1, slide_numbers=[1])
-            final_video_path = process_policy_job(job_id, ppt_path, language)
+            # FIXED: Use update_progress instead
+            await job_manager.update_progress(
+                job_id=job_id, 
+                progress=10, 
+                current_step="Starting policy extraction",
+                extra_meta={"total_slides": 1}
+            )
+            final_video_path = await process_policy_job(job_id, ppt_path, language)
             end_time = datetime.utcnow()
             result = JobResult(
                 job_id=job_id,
@@ -99,12 +113,36 @@ async def run_processing_job(
                 generate_mcqs=generate_mcqs,
             )
 
-        job_manager.complete_job(job_id, result)
+        await job_manager.complete_job(job_id)
+        slide_metrics = getattr(result, "slide_metrics", None) or []
+        await job_manager.update_progress(
+            job_id=job_id,
+            progress=100,
+            current_step="Completed",
+            status=JobState.COMPLETED.value,
+            extra_meta={
+                "phase": "completed",
+                "slide_metrics": json.dumps(slide_metrics, ensure_ascii=True),
+            },
+        )
 
     except JobCancelledError:
-        pass
+        await job_manager.update_progress(
+            job_id=job_id,
+            progress=0,
+            current_step="Cancelled",
+            status=JobState.CANCELLED.value,
+            extra_meta={"phase": "cancelled"},
+        )
     except Exception as exc:
-        job_manager.fail_job(job_id, str(exc))
+        await job_manager.fail_job(job_id, str(exc))
+        await job_manager.update_progress(
+            job_id=job_id,
+            progress=0,
+            current_step="Failed",
+            status=JobState.FAILED.value,
+            extra_meta={"phase": "failed", "error": str(exc)},
+        )
 
 
 # Keep sync version for backward compatibility

@@ -16,11 +16,11 @@ export function useJobStatus(jobId: string): UseJobStatusReturn {
     retry: false,
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      // Stop polling if job is complete or failed
-      if (status === 'completed' || status === 'failed') {
-        return false;
+      // Use exact strings from your backend Redis updates
+      if (status === 'Completed' || status === 'Failed') {
+        return false; // Stop polling
       }
-      return 2000; // Poll every 2 seconds
+      return 2000; // Poll every 2 seconds while processing
     },
     enabled: !!jobId,
   });

@@ -68,7 +68,7 @@ async def generate_mcqs_async(slide_text: str, language: str) -> str:
             temperature=settings.qa_temperature,
         )
         
-        raw_output = str(result).strip()
+        raw_output = str(result["text"]).strip()
         logger.debug(f"Generated MCQs: {len(raw_output)} chars")
         return raw_output
         
@@ -100,7 +100,7 @@ def generate_mcqs_sync(slide_text: str, language: str) -> str:
             temperature=settings.qa_temperature,
         )
         
-        raw_output = str(result).strip()
+        raw_output = str(result["text"]).strip()
         logger.debug(f"Generated MCQs: {len(raw_output)} chars")
         return raw_output
         

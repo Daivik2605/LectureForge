@@ -9,7 +9,7 @@ interface UseJobWebSocketReturn {
   error: string | null;
 }
 
-export function useJobWebSocket(jobId: string): UseJobWebSocketReturn {
+export function useJobWebSocket(jobId: string, retryToken: number = 0): UseJobWebSocketReturn {
   const [status, setStatus] = useState<JobStatus | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -87,7 +87,7 @@ export function useJobWebSocket(jobId: string): UseJobWebSocketReturn {
       console.error('Failed to create WebSocket:', e);
       setError('Failed to connect');
     }
-  }, [jobId, status?.status]);
+  }, [jobId, status?.status, retryToken]);
 
   useEffect(() => {
     connect();

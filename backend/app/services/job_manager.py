@@ -4,11 +4,16 @@ Uses in-memory storage (can be extended to Redis for production).
 """
 
 import asyncio
+from fileinput import filename
 import uuid
 from datetime import datetime
 from typing import Optional, Callable, Any
 from collections import OrderedDict
 import threading
+
+import json
+from typing import Optional, List
+from app.core.redis import redis_manager  # Assuming your singleton exists
 
 from app.core.logging import get_logger
 from app.core.config import settings
@@ -31,362 +36,243 @@ logger = get_logger(__name__)
 
 
 class JobStore:
-    """Thread-safe in-memory job storage."""
-    
-    def __init__(self, max_jobs: int = 100):
-        self._jobs: OrderedDict[str, dict] = OrderedDict()
-        self._results: dict[str, JobResult] = {}
-        self._lock = threading.Lock()
-        self._max_jobs = max_jobs
-    
-    def create(self, job_id: str, data: dict) -> None:
-        """Create a new job entry."""
-        with self._lock:
-            # Evict oldest jobs if at capacity
-            while len(self._jobs) >= self._max_jobs:
-                oldest = next(iter(self._jobs))
-                del self._jobs[oldest]
-                if oldest in self._results:
-                    del self._results[oldest]
-            
-            self._jobs[job_id] = data
-    
-    def get(self, job_id: str) -> Optional[dict]:
-        """Get job data by ID."""
-        with self._lock:
-            return self._jobs.get(job_id)
-    
-    def update(self, job_id: str, data: dict) -> None:
-        """Update job data."""
-        with self._lock:
-            if job_id in self._jobs:
-                self._jobs[job_id].update(data)
-    
-    def set_result(self, job_id: str, result: JobResult) -> None:
-        """Store job result."""
-        with self._lock:
-            self._results[job_id] = result
-    
-    def get_result(self, job_id: str) -> Optional[JobResult]:
-        """Get job result."""
-        with self._lock:
-            return self._results.get(job_id)
-    
-    def delete(self, job_id: str) -> None:
-        """Delete job and its result."""
-        with self._lock:
-            self._jobs.pop(job_id, None)
-            self._results.pop(job_id, None)
-    
-    def get_active_count(self) -> int:
-        """Count jobs in pending or processing state."""
-        with self._lock:
-            return sum(
-                1 for job in self._jobs.values()
-                if job.get("status") in [JobState.PENDING, JobState.PROCESSING]
-            )
-    
-    def list_jobs(self, limit: int = 10) -> list[dict]:
-        """List recent jobs."""
-        with self._lock:
-            jobs = list(self._jobs.values())[-limit:]
-            return list(reversed(jobs))
-
-
-class JobManager:
     """
-    Manages job lifecycle: creation, execution, progress tracking.
+    Data Access Layer (DAL) for Redis.
+    
+    This class handles the raw communication with the Redis database. 
+    Every method is 'async' because interacting with Redis involves network I/O.
+    The 'await' keyword is used inside these methods to pause execution 
+    without blocking the CPU while waiting for the database to respond.
     """
     
     def __init__(self):
-        self.store = JobStore(max_jobs=100)
-        self._websocket_callbacks: dict[str, list[Callable]] = {}
-        self._cancel_flags: dict[str, bool] = {}
-    
-    def create_job(
-        self,
-        filename: str,
-        language: str,
-        max_slides: int,
-        generate_video: bool = True,
-        generate_mcqs: bool = True,
-    ) -> str:
-        """
-        Create a new processing job.
+        # We use your existing redis_manager singleton
+        self.redis = redis_manager 
+        self.JOB_PREFIX = "job:"
+        self.RESULT_PREFIX = "result:"
+
+    async def create(self, job_id: str, data: dict) -> None:
+        """Create a new job entry in Redis with a status of 'Queued'."""
+        key = f"{self.JOB_PREFIX}{job_id}"
+        # Store as a Hash in Redis for easy updates
+        await self.redis.update_job_progress(job_id, "Queued", 0, data)
+
+    async def get(self, job_id: str) -> Optional[dict]:
+        """Fetch job metadata from Redis."""
+        # This is fine because it calls a method on your manager, not the client directly
+        return self.redis.get_job_status(job_id)
+
+    async def update(self, job_id: str, data: dict) -> None:
+        """Merge new data into the existing Redis hash."""
+        key = f"{self.JOB_PREFIX}{job_id}"
+        # FIX: Added underscore and removed await
+        self.redis._client.hset(key, mapping=data)
+
+    async def set_result(self, job_id: str, result: dict) -> None:
+        """Store the final job result."""
+        key = f"{self.RESULT_PREFIX}{job_id}"
+        # FIX: Added underscore and removed await
+        self.redis._client.set(key, json.dumps(result))
+
+    async def get_result(self, job_id: str) -> Optional[dict]:
+        """Retrieve the stored result."""
+        key = f"{self.RESULT_PREFIX}{job_id}"
+        # FIX: Added underscore and removed await
+        raw = self.redis._client.get(key)
+        return json.loads(raw) if raw else None
+
+    async def delete(self, job_id: str) -> None:
+        """Atomic cleanup of job and result keys."""
+        # FIX: Added underscore and removed await
+        self.redis._client.delete(f"{self.JOB_PREFIX}{job_id}", f"{self.RESULT_PREFIX}{job_id}")
+
+    async def get_active_count(self) -> int:
+        raw_count = self.redis._client.get("active_jobs_count")
+        if raw_count is None:
+            return 0
+        # casting the Redis string to a Python int
+        return int(raw_count)
+
+    async def list_jobs(self, limit: int = 10) -> List[dict]:
+        """Fetch the most recent jobs using Redis keys."""
+        # FIX: Added underscore to _client
+        keys = self.redis._client.keys(f"{self.JOB_PREFIX}*")
+        results = []
         
-        Returns:
-            job_id: Unique identifier for the job
-        """
-        # Check concurrent job limit
-        active_count = self.store.get_active_count()
+        # Ensure we don't try to slice an empty list
+        if not keys:
+            return []
+
+        for key in keys[-limit:]:
+            # FIX: Added underscore to _client
+            job = self.redis._client.hgetall(key)
+            if job:
+                results.append(job)
+        return results
+
+class JobManager:
+    def __init__(self):
+        self.store = JobStore()
+        self._websocket_callbacks: dict[str, list[Callable]] = {}
+
+   
+    async def create_job(self, filename, language, max_slides, generate_video, generate_mcqs, mode, job_id):
+        # 1. Limit Check
+        active_count = await self.store.get_active_count()
         if active_count >= settings.max_concurrent_jobs:
             raise TooManyJobsError(settings.max_concurrent_jobs)
-        
-        job_id = str(uuid.uuid4())
-        now = datetime.utcnow()
-        
+
+        # 2. Prepare Data (Stringified for Redis)
+        now_str = datetime.utcnow().isoformat()
         job_data = {
-            "job_id": job_id,
-            "filename": filename,
-            "language": language,
-            "max_slides": max_slides,
-            "generate_video": generate_video,
-            "generate_mcqs": generate_mcqs,
-            "status": JobState.PENDING,
-            "progress": 0,
-            "current_slide": None,
-            "total_slides": None,
-            "current_step": "Queued",
-            "slides_progress": [],
-            "error": None,
-            "created_at": now,
-            "updated_at": now,
-            "completed_at": None,
+            "job_id": str(job_id),
+            "filename": str(filename),
+            "language": str(language),
+            "mode": str(mode),
+            "max_slides": str(int(max_slides or 0)),
+            "generate_video": str(bool(generate_video)).lower(),
+            "generate_mcqs": str(bool(generate_mcqs)).lower(),
+            "status": JobState.PENDING.value,
+            "progress": "0",
+            "current_step": "Initializing",
+            "created_at": now_str,
+            "updated_at": now_str,
+            "slides_progress": "[]",
         }
-        
-        self.store.create(job_id, job_data)
-        logger.info(f"Created job {job_id} for {filename}")
-        
+
+        # 3. Use HMSET to ensure all fields are saved as a hash
+        # This prevents the "Job Not Found" error by ensuring the key exists immediately
+        key = f"job:{job_id}"
+        self.store.redis._client.hmset(key, job_data)
+        self.store.redis._client.expire(key, 3600) # Auto-delete after 1 hour
+
+        logger.info(f"Successfully created Redis hash for job: {job_id}")
         return job_id
     
-    def get_job_status(self, job_id: str) -> JobStatus:
-        """Get current job status."""
-        job_data = self.store.get(job_id)
+    async def get_job_status(self, job_id: str) -> JobStatus:
+        job_data = await self.store.get(job_id)
         if not job_data:
             raise JobNotFoundError(job_id)
-        
-        return JobStatus(**job_data)
-    
-    def get_job_result(self, job_id: str) -> JobResult:
-        """Get job result (only available when completed)."""
-        result = self.store.get_result(job_id)
-        if not result:
-            job_data = self.store.get(job_id)
-            if not job_data:
-                raise JobNotFoundError(job_id)
-            if job_data["status"] != JobState.COMPLETED:
-                raise JobNotFoundError(f"Job {job_id} not completed yet")
-        return result
-    
-    def update_progress(
+
+        normalized_data = self._normalize_job_data(job_data)
+        return JobStatus(**normalized_data)
+
+    async def get_job_result(self, job_id: str) -> Optional[JobResult]:
+        """Fixes the AttributeError when job finishes"""
+        result_data = await self.store.get_result(job_id)
+        return JobResult(**result_data) if result_data else None
+
+    async def update_progress(
         self,
         job_id: str,
         progress: int,
-        current_slide: Optional[int] = None,
-        current_step: Optional[str] = None,
-        slides_progress: Optional[list[SlideProgress]] = None,
+        current_step: str | None = None,
+        status: str | None = None,
+        extra_meta: dict | None = None,
     ) -> None:
-        """Update job progress."""
-        update_data = {
-            "progress": min(progress, 100),
-            "updated_at": datetime.utcnow(),
+        payload = {
+            "progress": int(progress),
+            "updated_at": datetime.utcnow().isoformat(),
         }
-        
-        if current_slide is not None:
-            update_data["current_slide"] = current_slide
         if current_step is not None:
-            update_data["current_step"] = current_step
-        if slides_progress is not None:
-            update_data["slides_progress"] = [sp.model_dump() for sp in slides_progress]
-        
-        self.store.update(job_id, update_data)
-        
-        # Notify WebSocket subscribers
-        asyncio.create_task(self._notify_progress(job_id))
-    
-    def start_processing(self, job_id: str, total_slides: int, slide_numbers: list[int] = None) -> None:
-        """Mark job as processing."""
-        # Initialize slide progress with actual slide numbers
-        if slide_numbers:
-            slides_progress = [
-                SlideProgress(slide_number=num).model_dump()
-                for num in slide_numbers
-            ]
-        else:
-            slides_progress = [
-                SlideProgress(slide_number=i + 1).model_dump()
-                for i in range(total_slides)
-            ]
-        
-        self.store.update(job_id, {
-            "status": JobState.PROCESSING,
-            "total_slides": total_slides,
-            "current_step": "Starting processing",
-            "slides_progress": slides_progress,
-            "updated_at": datetime.utcnow(),
-        })
-        
-        asyncio.create_task(self._notify_progress(job_id))
-    
-    def update_slide_progress(
-        self,
-        job_id: str,
-        slide_number: int,
-        narration: Optional[SlideState] = None,
-        mcq: Optional[SlideState] = None,
-        video: Optional[SlideState] = None,
-        error: Optional[str] = None,
-    ) -> None:
-        """Update progress for a specific slide."""
-        job_data = self.store.get(job_id)
-        if not job_data:
-            return
-        
-        slides_progress = job_data.get("slides_progress", [])
-        for sp in slides_progress:
-            if sp["slide_number"] == slide_number:
-                if narration is not None:
-                    sp["narration"] = narration.value
-                if mcq is not None:
-                    sp["mcq"] = mcq.value
-                if video is not None:
-                    sp["video"] = video.value
-                if error is not None:
-                    sp["error"] = error
-                break
-        
-        self.store.update(job_id, {
-            "slides_progress": slides_progress,
-            "updated_at": datetime.utcnow(),
-        })
-        
-        asyncio.create_task(self._notify_progress(job_id))
-    
-    def complete_job(self, job_id: str, result: JobResult) -> None:
-        """Mark job as completed with result."""
-        now = datetime.utcnow()
-        
-        self.store.update(job_id, {
-            "status": JobState.COMPLETED,
+            payload["current_step"] = current_step
+        if extra_meta:
+            payload.update(extra_meta)
+        await self.store.redis.update_job_progress(
+            job_id=job_id,
+            status=status or JobState.PROCESSING.value,
+            progress=int(progress),
+            meta=payload,
+        )
+
+    async def complete_job(self, job_id: str, result_url: str | None = None) -> None:
+        payload = {
+            "status": JobState.COMPLETED.value,
             "progress": 100,
-            "current_step": "Completed",
-            "completed_at": now,
-            "updated_at": now,
-        })
-        
-        self.store.set_result(job_id, result)
-        logger.info(f"Job {job_id} completed successfully")
-        
-        asyncio.create_task(self._notify_completed(job_id, result))
-    
-    def fail_job(self, job_id: str, error: str) -> None:
-        """Mark job as failed."""
-        self.store.update(job_id, {
-            "status": JobState.FAILED,
-            "error": error,
-            "current_step": "Failed",
-            "updated_at": datetime.utcnow(),
-        })
-        
-        logger.error(f"Job {job_id} failed: {error}")
-        asyncio.create_task(self._notify_error(job_id, error))
-    
-    def cancel_job(self, job_id: str) -> bool:
-        """Request job cancellation."""
-        job_data = self.store.get(job_id)
-        if not job_data:
-            raise JobNotFoundError(job_id)
-        
-        if job_data["status"] in [JobState.COMPLETED, JobState.FAILED, JobState.CANCELLED]:
-            return False
-        
-        self._cancel_flags[job_id] = True
-        self.store.update(job_id, {
-            "status": JobState.CANCELLED,
-            "current_step": "Cancelled",
-            "updated_at": datetime.utcnow(),
-        })
-        
-        logger.info(f"Job {job_id} cancelled")
-        return True
-    
-    def is_cancelled(self, job_id: str) -> bool:
-        """Check if job cancellation was requested."""
-        return self._cancel_flags.get(job_id, False)
-    
-    def check_cancellation(self, job_id: str) -> None:
-        """Raise exception if job was cancelled."""
-        if self.is_cancelled(job_id):
-            raise JobCancelledError(job_id)
-    
-    # ===================
-    # WebSocket Support
-    # ===================
-    
-    def subscribe(self, job_id: str, callback: Callable) -> None:
-        """Subscribe to job updates."""
+            "completed_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+        if result_url:
+            payload["result_url"] = result_url
+        await self.store.redis.update_job_progress(
+            job_id=job_id,
+            status=JobState.COMPLETED.value,
+            progress=100,
+            meta=payload,
+        )
+
+    async def fail_job(self, job_id: str, error_message: str) -> None:
+        payload = {
+            "status": JobState.FAILED.value,
+            "progress": 0,
+            "error": error_message,
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+        await self.store.redis.update_job_progress(
+            job_id=job_id,
+            status=JobState.FAILED.value,
+            progress=0,
+            meta=payload,
+        )
+
+    # WebSocket Logic for Async
+    def subscribe(self, job_id: str, callback: Callable):
         if job_id not in self._websocket_callbacks:
             self._websocket_callbacks[job_id] = []
         self._websocket_callbacks[job_id].append(callback)
-    
-    def unsubscribe(self, job_id: str, callback: Callable) -> None:
-        """Unsubscribe from job updates."""
+
+    def unsubscribe(self, job_id: str, callback: Callable):
         if job_id in self._websocket_callbacks:
             self._websocket_callbacks[job_id] = [
-                cb for cb in self._websocket_callbacks[job_id]
-                if cb != callback
+                cb for cb in self._websocket_callbacks[job_id] if cb != callback
             ]
-    
-    async def _notify_progress(self, job_id: str) -> None:
-        """Notify all subscribers of progress update."""
-        callbacks = self._websocket_callbacks.get(job_id, [])
-        job_data = self.store.get(job_id)
-        
-        if job_data and callbacks:
-            message = {
-                "type": "progress",
-                "job_id": job_id,
-                "data": {
-                    "progress": job_data["progress"],
-                    "current_slide": job_data.get("current_slide"),
-                    "current_step": job_data.get("current_step"),
-                    "slides_progress": job_data.get("slides_progress", []),
-                },
-                "timestamp": datetime.utcnow().isoformat(),
-            }
-            
-            for callback in callbacks:
-                try:
-                    await callback(message)
-                except Exception as e:
-                    logger.error(f"WebSocket callback error: {e}")
-    
-    async def _notify_completed(self, job_id: str, result: JobResult) -> None:
-        """Notify all subscribers of completion."""
-        callbacks = self._websocket_callbacks.get(job_id, [])
-        
-        if callbacks:
-            message = {
-                "type": "completed",
-                "job_id": job_id,
-                "data": {"result": result.model_dump()},
-                "timestamp": datetime.utcnow().isoformat(),
-            }
-            
-            for callback in callbacks:
-                try:
-                    await callback(message)
-                except Exception as e:
-                    logger.error(f"WebSocket callback error: {e}")
-    
-    async def _notify_error(self, job_id: str, error: str) -> None:
-        """Notify all subscribers of error."""
-        callbacks = self._websocket_callbacks.get(job_id, [])
-        
-        if callbacks:
-            message = {
-                "type": "error",
-                "job_id": job_id,
-                "data": {"error": error},
-                "timestamp": datetime.utcnow().isoformat(),
-            }
-            
-            for callback in callbacks:
-                try:
-                    await callback(message)
-                except Exception as e:
-                    logger.error(f"WebSocket callback error: {e}")
 
+    def _normalize_job_data(self, data: dict) -> dict:
+        normalized = dict(data)
+        now = datetime.utcnow().isoformat()
 
+        # 1. Set Defaults for missing Redis fields
+        defaults = {
+            "max_slides": 0,
+            "progress": 0,
+            "generate_video": "true",
+            "generate_mcqs": "true",
+            "status": "pending",
+            "created_at": now,
+            "updated_at": now,
+            "current_step": "Initializing",
+            "slides_progress": "[]"
+        }
+
+        for key, default_value in defaults.items():
+            if key not in normalized or normalized[key] in (None, "", "None"):
+                normalized[key] = default_value
+
+        # 2. Fix Status Enums (Pydantic is case-sensitive for Enums)
+        if str(normalized.get("status")).lower() == "queued":
+            normalized["status"] = "pending"
+
+        # 3. CRITICAL: Convert JSON strings back to Python objects
+        # Redis stores everything as strings; Pydantic needs a real list.
+        if isinstance(normalized.get("slides_progress"), str):
+            try:
+                normalized["slides_progress"] = json.loads(normalized["slides_progress"])
+            except (json.JSONDecodeError, TypeError):
+                normalized["slides_progress"] = []
+
+        # 4. Handle Boolean strings from Redis ("true" -> True)
+        for bool_key in ["generate_video", "generate_mcqs"]:
+            val = str(normalized.get(bool_key)).lower()
+            normalized[bool_key] = val == "true"
+
+        # 5. Ensure Numeric types
+        try:
+            normalized["max_slides"] = int(normalized.get("max_slides", 0))
+            normalized["progress"] = int(normalized.get("progress", 0))
+        except (ValueError, TypeError):
+            normalized["max_slides"] = 0
+            normalized["progress"] = 0
+        
+        return normalized
 # Global job manager instance
 job_manager = JobManager()

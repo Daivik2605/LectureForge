@@ -1,10 +1,12 @@
 from pathlib import Path
+import uuid
+
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query, Form, BackgroundTasks
-from app.services.ppt_processor import process_ppt
 from app.services.job_manager import job_manager
 from app.services.async_processor import run_processing_job
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.core.redis import redis_manager
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["Process"])
@@ -59,17 +61,20 @@ async def process_ppt_async_endpoint(
             status_code=400,
             detail=f"Invalid file type for mode={mode}. Allowed: {allowed_list}"
         )
-    
     # Create job with all required parameters
     try:
-        job_id = job_manager.create_job(
+        job_id = str(uuid.uuid4())
+        # FIX: Await the async create_job and REMOVE the manual redis_manager call
+        await job_manager.create_job(
             filename=file.filename,
             language=language,
             max_slides=max_slides,
             generate_video=generate_video,
             generate_mcqs=generate_mcqs,
+            mode=mode, # Pass the mode here
+            job_id=job_id,
         )
-        logger.info(f"Created job {job_id} for file {file.filename}")
+        logger.info(f"Created and saved job {job_id} to Redis")
     except Exception as e:
         logger.error(f"Failed to create job: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to create job: {str(e)}")
@@ -104,13 +109,14 @@ async def process_ppt_async_endpoint(
     
     return {
         "job_id": job_id,
-        "status": "processing",
+        "status": "pending",
         "message": f"Processing started for {file.filename}"
     }
 
 
 @router.post("/process-ppt")
 async def process_ppt_endpoint(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     max_slides: int = Query(default=1, ge=1, le=5),
     language: str = Form("en"),
@@ -121,6 +127,8 @@ async def process_ppt_endpoint(
             status_code=400,
             detail="language must be one of: en, fr, hi"
         )
+
+    job_id = str(uuid.uuid4())
 
     contents = await file.read()
     if not contents:
@@ -134,16 +142,45 @@ async def process_ppt_endpoint(
     with open(temp_path, "wb") as f:
         f.write(contents)
 
-    results = process_ppt(
+    try:
+        job_manager.create_job(
+            filename=file.filename,
+            language=language,
+            max_slides=max_slides,
+            generate_video=True,
+            generate_mcqs=True,
+            job_id=job_id,
+        )
+        redis_manager.update_job_progress(
+            job_id=job_id,
+            status="Queued",
+            progress=0,
+            meta={
+                "filename": file.filename,
+                "language": language,
+                "mode": "ppt",
+            },
+        )
+        logger.info(f"Created job {job_id} for file {file.filename}")
+    except Exception as e:
+        logger.error(f"Failed to create job: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create job: {str(e)}")
+
+    background_tasks.add_task(
+        run_processing_job,
+        job_id=job_id,
         ppt_path=str(temp_path),
         language=language,
-        max_slides=max_slides
+        mode="ppt",
+        max_slides=max_slides,
+        generate_video=True,
+        generate_mcqs=True,
     )
 
     return {
-        "filename": file.filename,
-        "language": language,
-        "slides": results
+        "job_id": job_id,
+        "status": "processing",
+        "message": f"Processing started for {file.filename}"
     }
 
 @router.post("/process-ppt-video")
@@ -153,6 +190,8 @@ async def process_ppt_video_endpoint(
     language: str = Form("en"),
     max_slides: int = Query(default=5, ge=1, le=10),
 ):
+    job_id = str(uuid.uuid4())
+
     contents = await file.read()
     if not contents:
         raise HTTPException(status_code=400, detail="Empty file uploaded")
@@ -162,12 +201,23 @@ async def process_ppt_video_endpoint(
         f.write(contents)
 
     try:
-        job_id = job_manager.create_job(
+        job_manager.create_job(
             filename=file.filename,
             language=language,
             max_slides=max_slides,
             generate_video=True,
             generate_mcqs=False,
+            job_id=job_id,
+        )
+        redis_manager.update_job_progress(
+            job_id=job_id,
+            status="Queued",
+            progress=0,
+            meta={
+                "filename": file.filename,
+                "language": language,
+                "mode": "ppt",
+            },
         )
         logger.info(f"Created job {job_id} for video generation: {file.filename}")
     except Exception as e:

@@ -13,7 +13,9 @@ from app.core.exceptions import PPTEngineError
 from app.api.health import router as health_router
 from app.api.process import router as process_router
 from app.api.jobs import router as jobs_router
+from app.api.benchmarks import router as benchmarks_router
 from app.api.websocket import router as websocket_router
+from app.core.redis import redis_manager
 
 # Setup logging
 setup_logging(
@@ -97,6 +99,7 @@ API_PREFIX = "/api/v1"
 app.include_router(health_router, prefix=API_PREFIX)
 app.include_router(process_router, prefix=API_PREFIX)
 app.include_router(jobs_router, prefix=API_PREFIX)
+app.include_router(benchmarks_router, prefix=API_PREFIX)
 app.include_router(websocket_router)
 
 
@@ -111,13 +114,16 @@ def root():
         "health": "/health",
     }
 
+@app.on_event("startup")
+async def startup_event():
+    # Reset the counter on every restart to clear ghost jobs
+    await redis_manager.client.set("active_jobs_count", 0)
+    logger.info("System startup: Active job counter reset to 0")
 
 # Mount static files for serving generated content AFTER all routes
 # This allows direct access to generated files like /data/final_videos/file.mp4
 data_dir = settings.base_data_dir
-if data_dir.exists():
-    app.mount("/data", StaticFiles(directory=str(data_dir)), name="data")
+app.mount("/data", StaticFiles(directory=str(data_dir)), name="data")
 
 storage_dir = settings.storage_dir
-if storage_dir.exists():
-    app.mount("/storage", StaticFiles(directory=str(storage_dir)), name="storage")
+app.mount("/storage", StaticFiles(directory=str(storage_dir)), name="storage")

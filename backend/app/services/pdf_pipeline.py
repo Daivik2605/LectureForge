@@ -15,6 +15,7 @@ from pdfminer.pdfpage import PDFPage
 from app.core.config import settings
 from app.core.exceptions import JobCancelledError
 from app.core.logging import get_job_logger
+from app.core.redis import redis_manager
 from app.models.job import JobResult, SlideResult, SlideState, MCQuestion
 from app.services.job_manager import job_manager
 from app.services.llm_service import batch_summarize_pages, batch_generate_mcqs
@@ -27,6 +28,7 @@ from app.services.slide_renderer import render_slide_image
 from app.services.tts_service import synthesize_speech
 from app.services.video_assembler import create_video
 from app.services.video_stitcher import stitch_videos
+from app.services.vibe_metrics import build_narration_meta
 
 
 def _load_pdf_pages(pdf_path: str) -> list[dict[str, Any]]:
@@ -88,7 +90,13 @@ async def process_pdf_job(
             }
         )
 
-    job_manager.update_progress(job_id, 10, current_step="Parsing PDF")
+    await job_manager.update_progress(job_id, 10, current_step="Parsing PDF")
+    await job_manager.update_progress(
+        job_id=job_id,
+        progress=10,
+        current_step="Extracting",
+        extra_meta={"phase": "extraction"},
+    )
 
     if not page_items:
         return JobResult(
@@ -101,6 +109,7 @@ async def process_pdf_job(
             processing_time_seconds=0,
             cache_hits=0,
             cache_misses=0,
+            slide_metrics=[],
             created_at=start_time,
             completed_at=datetime.utcnow(),
         )
@@ -131,7 +140,10 @@ async def process_pdf_job(
     summary_cache_hits = 0
     summary_cache_misses = 0
     summaries: dict[str, dict[str, Any]] = {}
+    summary_meta_by_page_id: dict[str, dict[str, Any]] = {}
     missing_pages: list[dict[str, Any]] = []
+    last_summary_llm_metrics: dict[str, Any] = {}
+    last_summary_json_adherence = True
 
     for page in page_items:
         cache_key = build_cache_key(
@@ -144,6 +156,10 @@ async def process_pdf_job(
             summaries[page["page_id"]] = cached_payload["summary"]
             summary_cache_hits += 1
             job_logger.info(f"Summary cache hit for {page['page_id']}")
+            summary_meta_by_page_id[page["page_id"]] = {
+                "llm_metrics": None,
+                "json_adherence": True,
+            }
         else:
             missing_pages.append({**page, "cache_key": cache_key})
             summary_cache_misses += 1
@@ -163,14 +179,33 @@ async def process_pdf_job(
             job_logger.info(f"Summary batch {idx}/{len(batches)} for pages {batch_ids}")
             try:
                 async with llm_semaphore:
-                    batch_results = await batch_summarize_pages(batch, language, max_words)
+                    batch_results, batch_meta = await batch_summarize_pages(
+                        batch, language, max_words
+                    )
+                last_summary_llm_metrics = batch_meta.get("llm_metrics", {})
+                last_summary_json_adherence = bool(batch_meta.get("json_adherence", True))
+                if last_summary_llm_metrics:
+                    job_logger.info(
+                        "Summary batch metrics",
+                        extra={
+                            "ttft": last_summary_llm_metrics.get("ttft"),
+                            "tps": last_summary_llm_metrics.get("tps"),
+                            "memory_kb": last_summary_llm_metrics.get("memory_kb"),
+                        },
+                    )
             except Exception:
                 batch_results = {}
+                batch_meta = {"llm_metrics": None, "json_adherence": False}
                 for page in batch:
                     async with llm_semaphore:
-                        batch_results.update(
-                            await batch_summarize_pages([page], language, max_words)
+                        single_results, single_meta = await batch_summarize_pages(
+                            [page], language, max_words
                         )
+                        batch_results.update(single_results)
+                        summary_meta_by_page_id[page["page_id"]] = {
+                            "llm_metrics": single_meta.get("llm_metrics"),
+                            "json_adherence": bool(single_meta.get("json_adherence", True)),
+                        }
 
             for page in batch:
                 page_id = page["page_id"]
@@ -186,19 +221,24 @@ async def process_pdf_job(
                             "created_at": datetime.utcnow().isoformat(),
                         },
                     )
+                    if page_id not in summary_meta_by_page_id:
+                        summary_meta_by_page_id[page_id] = {
+                            "llm_metrics": batch_meta.get("llm_metrics"),
+                            "json_adherence": bool(batch_meta.get("json_adherence", True)),
+                        }
                 else:
                     job_logger.warning(f"Missing summary for {page_id}")
 
-            job_manager.update_progress(
+            await job_manager.update_progress(
                 job_id,
                 _progress_for_batches(idx, len(batches), 10, 30),
                 current_step="Generating summaries",
             )
     else:
-        job_manager.update_progress(job_id, 30, current_step="Generating summaries")
+        await job_manager.update_progress(job_id, 30, current_step="Generating summaries")
 
     if not generate_mcqs:
-        job_manager.update_progress(job_id, 40, current_step="LLM batches completed")
+        await job_manager.update_progress(job_id, 40, current_step="LLM batches completed")
 
     mcq_cache_hits = 0
     mcq_cache_misses = 0
@@ -236,14 +276,13 @@ async def process_pdf_job(
                 job_logger.info(f"MCQ batch {idx}/{len(batches)} for pages {batch_ids}")
                 try:
                     async with llm_semaphore:
-                        batch_results = await batch_generate_mcqs(batch, language)
+                        batch_results, _batch_meta = await batch_generate_mcqs(batch, language)
                 except Exception:
                     batch_results = {}
                     for page in batch:
                         async with llm_semaphore:
-                            batch_results.update(
-                                await batch_generate_mcqs([page], language)
-                            )
+                            single_results, _ = await batch_generate_mcqs([page], language)
+                            batch_results.update(single_results)
                 for page in batch:
                     page_id = page["page_id"]
                     questions = batch_results.get(page_id)
@@ -258,15 +297,29 @@ async def process_pdf_job(
                                 "created_at": datetime.utcnow().isoformat(),
                             },
                         )
-                job_manager.update_progress(
+                await job_manager.update_progress(
                     job_id,
                     _progress_for_batches(idx, len(batches), 30, 40),
                     current_step="Generating MCQs",
                 )
 
-        job_manager.update_progress(job_id, 40, current_step="LLM batches completed")
+        await job_manager.update_progress(job_id, 40, current_step="LLM batches completed")
+
+    await job_manager.update_progress(
+        job_id=job_id,
+        progress=40,
+        current_step="Narrating",
+        extra_meta={
+            "phase": "narration",
+            "ttft": last_summary_llm_metrics.get("ttft"),
+            "tps": last_summary_llm_metrics.get("tps"),
+            "memory_kb": last_summary_llm_metrics.get("memory_kb"),
+            "json_adherence": last_summary_json_adherence,
+        },
+    )
 
     slides_data: list[dict[str, Any]] = []
+    narration_meta_by_slide: dict[int, dict[str, Any]] = {}
     slide_number = 0
     for page in page_items:
         summary = summaries.get(page["page_id"])
@@ -274,14 +327,23 @@ async def process_pdf_job(
             continue
         slide_number += 1
         slide_text = _build_slide_text(summary["title"], summary.get("bullets", []))
+        narration_text = summary.get("narration", "")
+        summary_meta = summary_meta_by_page_id.get(page["page_id"], {})
+        narration_meta_by_slide[slide_number] = build_narration_meta(
+            page["text"],
+            narration_text,
+            json_adherence=bool(summary_meta.get("json_adherence", True)),
+            llm_metrics=summary_meta.get("llm_metrics"),
+        )
         slides_data.append(
             {
                 "slide_number": slide_number,
                 "page_id": page["page_id"],
                 "text": slide_text,
+                "source_text": page["text"],
                 "title": summary["title"],
                 "bullets": summary.get("bullets", []),
-                "narration": summary.get("narration", ""),
+                "narration": narration_text,
                 "mcqs": mcqs.get(page["page_id"], []),
             }
         )
@@ -300,6 +362,7 @@ async def process_pdf_job(
             processing_time_seconds=(end_time - start_time).total_seconds(),
             cache_hits=summary_cache_hits + mcq_cache_hits,
             cache_misses=summary_cache_misses + mcq_cache_misses,
+            slide_metrics=[],
             created_at=start_time,
             completed_at=end_time,
         )
@@ -327,6 +390,9 @@ async def process_pdf_job(
             return await loop.run_in_executor(None, create_video, image_path, audio_path)
 
     video_paths: dict[int, str] = {}
+    slide_index_map = {slide_num: idx + 1 for idx, slide_num in enumerate(slide_numbers)}
+    last_reported_index = [0]
+    progress_lock = asyncio.Lock()
 
     async def _process_slide(slide: dict[str, Any]) -> SlideResult:
         slide_num = slide["slide_number"]
@@ -340,6 +406,24 @@ async def process_pdf_job(
             bullets=slide.get("bullets"),
             narration=slide.get("narration"),
         )
+
+        current_index = slide_index_map.get(slide_num, 0)
+        if current_index:
+            async with progress_lock:
+                    if current_index > last_reported_index[0]:
+                        last_reported_index[0] = current_index
+                        progress = int(40 + (current_index / total_slides) * 40)
+                        slide_meta = narration_meta_by_slide.get(slide_num, {})
+                        await job_manager.update_progress(
+                            job_id=job_id,
+                            progress=progress,
+                            current_step=f"Processing Slide {current_index} of {total_slides}",
+                            extra_meta={
+                                "phase": "rendering",
+                                "slide_number": slide_num,
+                                **slide_meta,
+                            },
+                        )
 
         if slide.get("mcqs"):
             qa_obj: dict[str, list[MCQuestion]] = {"easy": [], "medium": [], "hard": []}
@@ -375,22 +459,52 @@ async def process_pdf_job(
         return result
 
     results = await asyncio.gather(*[asyncio.create_task(_process_slide(slide)) for slide in slides_data])
-    job_manager.update_progress(job_id, 80, current_step="TTS and clip generation completed")
+    await job_manager.update_progress(job_id, 80, current_step="TTS and clip generation completed")
+    await job_manager.update_progress(
+        job_id=job_id,
+        progress=80,
+        current_step="Rendering",
+        extra_meta={"phase": "rendering"},
+    )
 
     final_video_path = None
+    model_name = settings.ollama_model or "unknown"
+    slide_metrics = []
+    for slide_num in slide_numbers:
+        meta = narration_meta_by_slide.get(slide_num, {})
+        slide_metrics.append(
+            {
+                "tps": meta.get("tps"),
+                "ttft": meta.get("ttft"),
+                "word_count": meta.get("narration_word_count"),
+                "json_valid": meta.get("json_adherence"),
+                "hallucination_ok": meta.get("hallucination_ok"),
+                "memory_kb": meta.get("memory_kb"),
+                "token_count": meta.get("token_count"),
+            }
+        )
+    final_meta = {"slide_metrics": slide_metrics}
     if generate_video and video_paths:
         ordered_paths = [video_paths[num] for num in slide_numbers if num in video_paths]
         output_dir = settings.storage_output_dir / job_id
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / "final.mp4"
-        job_manager.update_progress(job_id, 80, current_step="Stitching final video")
+        await job_manager.update_progress(job_id, 80, current_step="Stitching final video")
         loop = asyncio.get_event_loop()
         final_video_path = await loop.run_in_executor(
             None, stitch_videos, ordered_paths, str(output_path)
         )
-        job_manager.update_progress(job_id, 100, current_step="Processing completed")
+        redis_manager.archive_benchmark_data(job_id, model_name, final_meta)
+        job_logger.info(
+            f"Benchmark archived for model {model_name} on job {job_id}"
+        )
+        await job_manager.update_progress(job_id, 100, current_step="Processing completed")
     else:
-        job_manager.update_progress(job_id, 100, current_step="Processing completed")
+        redis_manager.archive_benchmark_data(job_id, model_name, final_meta)
+        job_logger.info(
+            f"Benchmark archived for model {model_name} on job {job_id}"
+        )
+        await job_manager.update_progress(job_id, 100, current_step="Processing completed")
 
     end_time = datetime.utcnow()
     return JobResult(
@@ -404,6 +518,7 @@ async def process_pdf_job(
         processing_time_seconds=(end_time - start_time).total_seconds(),
         cache_hits=summary_cache_hits + mcq_cache_hits,
         cache_misses=summary_cache_misses + mcq_cache_misses,
+        slide_metrics=slide_metrics,
         created_at=start_time,
         completed_at=end_time,
     )

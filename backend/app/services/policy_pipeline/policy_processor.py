@@ -4,6 +4,7 @@ Policy pipeline orchestration focused on chapter clip assembly.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from app.services.tts_service import synthesize_speech
 from app.services.slide_renderer import render_slide_image
 from app.services.video_assembler import create_video
 from app.services.video_stitcher import stitch_videos
+from app.models.job import JobState
 from app.services.job_manager import job_manager
 
 logger = get_logger(__name__)
@@ -71,16 +73,23 @@ def _chapter_title(text: str, index: int) -> str:
     return f"Chapter {index}"
 
 
-def process_policy_job(job_id: str, input_path: str, language: str = "en") -> str:
+async def process_policy_job(job_id: str, input_path: str, language: str = "en") -> str:
     """
     Process a policy document into a single stitched video.
     """
-    text = _extract_policy_text(input_path)
+    loop = asyncio.get_running_loop()
+    text = await loop.run_in_executor(None, _extract_policy_text, input_path)
     chapters = _split_chapters(text)
     if not chapters:
         raise ValueError("No policy content detected")
 
-    job_manager.update_progress(job_id, 10, current_step="Parsing and chunking policy")
+    await job_manager.update_progress(
+        job_id,
+        10,
+        current_step="Parsing and chunking policy",
+        status=JobState.PROCESSING.value,
+        extra_meta={"phase": "extraction", "mode": "policy"},
+    )
 
     temp_dir = settings.storage_temp_dir
     output_dir = settings.storage_output_dir / job_id
@@ -100,7 +109,13 @@ def process_policy_job(job_id: str, input_path: str, language: str = "en") -> st
             logger.info(f"Narration cache hit for policy chapter {idx}")
             narration = cached
         else:
-            narration = generate_narration_sync(chapter_text, language)
+            try:
+                narration = await asyncio.wait_for(
+                    loop.run_in_executor(None, generate_narration_sync, chapter_text, language),
+                    timeout=settings.llm_timeout,
+                )
+            except asyncio.TimeoutError as exc:
+                raise RuntimeError("Ollama timed out generating policy narration") from exc
             save_cached_narration(
                 cache_key,
                 narration,
@@ -108,30 +123,68 @@ def process_policy_job(job_id: str, input_path: str, language: str = "en") -> st
                 pipeline_type="policy",
             )
         if idx == 1:
-            job_manager.update_progress(job_id, 40, current_step="LLM batches completed")
+            await job_manager.update_progress(
+                job_id,
+                40,
+                current_step="LLM batches completed",
+                status=JobState.PROCESSING.value,
+                extra_meta={"phase": "narration", "mode": "policy"},
+            )
         slide_text = f"{title}\n\n{chapter_text}"
 
-        audio_path = synthesize_speech(narration, language)
-        image_path = render_slide_image(slide_text)
-        slide_clip = create_video(
-            image_path=image_path,
-            audio_path=audio_path,
-            output_path=str(temp_dir / f"chapter_{idx}_slide_1.mp4"),
+        audio_path = await loop.run_in_executor(None, synthesize_speech, narration, language)
+        image_path = await loop.run_in_executor(None, render_slide_image, slide_text)
+        slide_clip = await loop.run_in_executor(
+            None,
+            create_video,
+            image_path,
+            audio_path,
+            str(temp_dir / f"chapter_{idx}_slide_1.mp4"),
         )
 
         logger.info(f"Assembling chapter clip {idx}")
-        chapter_clip = stitch_videos(
+        chapter_clip = await loop.run_in_executor(
+            None,
+            stitch_videos,
             [slide_clip],
-            output_path=str(temp_dir / f"chapter_{idx}.mp4"),
+            str(temp_dir / f"chapter_{idx}.mp4"),
         )
         chapter_clips.append(chapter_clip)
 
-    job_manager.update_progress(job_id, 80, current_step="TTS and clip generation completed")
+        await job_manager.update_progress(
+            job_id,
+            int(40 + (idx / max(len(chapters), 1)) * 40),
+            current_step=f"Rendering chapter {idx} of {len(chapters)}",
+            status=JobState.PROCESSING.value,
+            extra_meta={
+                "phase": "rendering",
+                "mode": "policy",
+                "chapter_index": idx,
+                "total_chapters": len(chapters),
+                "chapter_title": title,
+            },
+        )
+
+    await job_manager.update_progress(
+        job_id,
+        80,
+        current_step="TTS and clip generation completed",
+        status=JobState.PROCESSING.value,
+        extra_meta={"phase": "rendering", "mode": "policy"},
+    )
 
     logger.info(f"Stitching final video from {len(chapter_clips)} chapters")
-    final_path = stitch_videos(
+    final_path = await loop.run_in_executor(
+        None,
+        stitch_videos,
         chapter_clips,
-        output_path=str(output_dir / "final.mp4"),
+        str(output_dir / "final.mp4"),
     )
-    job_manager.update_progress(job_id, 100, current_step="Processing completed")
+    await job_manager.update_progress(
+        job_id,
+        100,
+        current_step="Processing completed",
+        status=JobState.COMPLETED.value,
+        extra_meta={"phase": "completed", "mode": "policy"},
+    )
     return final_path

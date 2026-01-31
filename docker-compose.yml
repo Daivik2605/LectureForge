@@ -12,6 +12,15 @@ services:
       - ollama_data:/root/.ollama
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    container_name: lectureforge-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
   backend:
     build:
       context: .
@@ -26,12 +35,14 @@ services:
       - LOG_LEVEL=INFO
       - ENVIRONMENT=production
       - CORS_ORIGINS=["http://localhost:3000","http://frontend:3000"]
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - ./data:/app/backend/data
       - ./storage:/app/backend/storage
       - ./logs:/app/backend/logs
     depends_on:
       - ollama
+      - redis
     restart: unless-stopped
 
   frontend:
@@ -49,6 +60,7 @@ services:
 
 volumes:
   ollama_data:
+  redis_data:
 
 networks:
   default:

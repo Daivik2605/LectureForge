@@ -11,6 +11,7 @@ from pathlib import Path
 from app.core.config import settings
 from app.core.exceptions import PPTParseError, JobCancelledError
 from app.core.logging import get_job_logger
+from app.core.redis import redis_manager
 from app.models.job import JobResult, SlideResult, SlideState, MCQuestion
 from app.services.job_manager import job_manager
 from app.services.narration_chain import generate_narrations_batch, generate_narration_sync
@@ -22,6 +23,7 @@ from app.services.slide_renderer import render_slide_image
 from app.services.tts_service import synthesize_speech
 from app.services.video_assembler import create_video
 from app.services.video_stitcher import stitch_videos
+from app.services.vibe_metrics import build_narration_meta
 
 
 async def process_ppt_job(
@@ -42,7 +44,13 @@ async def process_ppt_job(
         except Exception as exc:
             raise PPTParseError(str(exc), Path(ppt_path).name)
 
-        job_manager.update_progress(job_id, 10, current_step="Parsing presentation")
+        await job_manager.update_progress(job_id, 10, current_step="Parsing presentation")
+        await job_manager.update_progress(
+            job_id=job_id,
+            progress=10,
+            current_step="Extracting",
+            extra_meta={"phase": "extraction"},
+        )
 
         slides = [s for s in all_slides if s["has_text"]][:max_slides]
         total_slides = len(slides)
@@ -57,6 +65,7 @@ async def process_ppt_job(
                 processing_time_seconds=0,
                 cache_hits=0,
                 cache_misses=0,
+                slide_metrics=[],
                 created_at=start_time,
                 completed_at=datetime.utcnow(),
             )
@@ -82,9 +91,12 @@ async def process_ppt_job(
         )
 
         narrations: dict[int, str] = {}
+        narration_meta_by_slide: dict[int, dict[str, object]] = {}
         slides_missing: list[dict] = []
         cache_hits = 0
         cache_misses = 0
+        last_llm_metrics: dict[str, object] = {}
+        last_json_adherence = True
 
         for slide in slides:
             slide_num = slide["slide_number"]
@@ -99,6 +111,12 @@ async def process_ppt_job(
                 if cached:
                     job_logger.info(f"Narration cache hit for slide {slide_num}")
                     narrations[slide_num] = cached
+                    narration_meta_by_slide[slide_num] = build_narration_meta(
+                        slide_text,
+                        cached,
+                        json_adherence=True,
+                        llm_metrics=None,
+                    )
                     cache_hits += 1
                     job_manager.update_slide_progress(job_id, slide_num, narration=SlideState.COMPLETED)
                 else:
@@ -130,7 +148,18 @@ async def process_ppt_job(
                     f"Narration batch {idx}/{len(batches)} for slides {batch_slide_numbers}"
                 )
                 async with llm_semaphore:
-                    batch_results = await generate_narrations_batch(batch, language)
+                    batch_results, batch_meta = await generate_narrations_batch(batch, language)
+                last_llm_metrics = batch_meta.get("llm_metrics", {})
+                last_json_adherence = bool(batch_meta.get("json_adherence", True))
+                if last_llm_metrics:
+                    job_logger.info(
+                        "Narration batch metrics",
+                        extra={
+                            "ttft": last_llm_metrics.get("ttft"),
+                            "tps": last_llm_metrics.get("tps"),
+                            "memory_kb": last_llm_metrics.get("memory_kb"),
+                        },
+                    )
                 for slide in batch:
                     slide_num = slide["slide_number"]
                     narration = batch_results.get(slide_num)
@@ -142,6 +171,15 @@ async def process_ppt_job(
                             language=language,
                             pipeline_type="ppt",
                         )
+                        llm_metrics = last_llm_metrics
+                        if slide_num in batch_meta.get("fallback_slide_numbers", []):
+                            llm_metrics = None
+                        narration_meta_by_slide[slide_num] = build_narration_meta(
+                            slide["text"],
+                            narration,
+                            json_adherence=last_json_adherence,
+                            llm_metrics=llm_metrics,
+                        )
                         job_manager.update_slide_progress(
                             job_id, slide_num, narration=SlideState.COMPLETED
                         )
@@ -150,17 +188,29 @@ async def process_ppt_job(
                         job_manager.update_slide_progress(
                             job_id, slide_num, narration=SlideState.FAILED
                         )
-                job_manager.update_progress(
+                await job_manager.update_progress(
                     job_id,
                     int(10 + (30 * idx / len(batches))),
                     current_step="Generating narrations",
                 )
 
-            job_manager.update_progress(job_id, 40, current_step="LLM batches completed")
+            await job_manager.update_progress(job_id, 40, current_step="LLM batches completed")
         else:
-            job_manager.update_progress(job_id, 40, current_step="LLM batches completed")
+            await job_manager.update_progress(job_id, 40, current_step="LLM batches completed")
 
-        job_manager.update_progress(job_id, 40, current_step="LLM batches completed")
+        await job_manager.update_progress(job_id, 40, current_step="LLM batches completed")
+        await job_manager.update_progress(
+            job_id=job_id,
+            progress=40,
+            current_step="Narrating",
+            extra_meta={
+                "phase": "narration",
+                "ttft": last_llm_metrics.get("ttft"),
+                "tps": last_llm_metrics.get("tps"),
+                "memory_kb": last_llm_metrics.get("memory_kb"),
+                "json_adherence": last_json_adherence,
+            },
+        )
 
         async def _run_tts(text: str) -> str:
             async with tts_semaphore:
@@ -178,6 +228,9 @@ async def process_ppt_job(
                 return await loop.run_in_executor(None, create_video, image_path, audio_path)
 
         video_paths: dict[int, str] = {}
+        slide_index_map = {slide_num: idx + 1 for idx, slide_num in enumerate(slide_numbers)}
+        last_reported_index = [0]
+        progress_lock = asyncio.Lock()
 
         async def _process_slide(slide: dict) -> SlideResult:
             slide_num = slide["slide_number"]
@@ -189,6 +242,24 @@ async def process_ppt_job(
                 text=slide_text,
                 has_text=True,
             )
+
+            current_index = slide_index_map.get(slide_num, 0)
+            if current_index:
+                async with progress_lock:
+                    if current_index > last_reported_index[0]:
+                        last_reported_index[0] = current_index
+                        progress = int(40 + (current_index / total_slides) * 40)
+                        slide_meta = narration_meta_by_slide.get(slide_num, {})
+                        await job_manager.update_progress(
+                            job_id=job_id,
+                            progress=progress,
+                            current_step=f"Processing Slide {current_index} of {total_slides}",
+                            extra_meta={
+                                "phase": "rendering",
+                                "slide_number": slide_num,
+                                **slide_meta,
+                            },
+                        )
 
             try:
                 narration = narrations.get(slide_num)
@@ -260,9 +331,31 @@ async def process_ppt_job(
             return slide_result
 
         results = await asyncio.gather(*[asyncio.create_task(_process_slide(slide)) for slide in slides])
-        job_manager.update_progress(job_id, 80, current_step="TTS and clip generation completed")
+        await job_manager.update_progress(job_id, 80, current_step="TTS and clip generation completed")
+        await job_manager.update_progress(
+            job_id=job_id,
+            progress=80,
+            current_step="Rendering",
+            extra_meta={"phase": "rendering"},
+        )
 
         final_video_path = None
+        model_name = settings.ollama_model or "unknown"
+        slide_metrics = []
+        for slide_num in slide_numbers:
+            meta = narration_meta_by_slide.get(slide_num, {})
+            slide_metrics.append(
+                {
+                    "tps": meta.get("tps"),
+                    "ttft": meta.get("ttft"),
+                    "word_count": meta.get("narration_word_count"),
+                    "json_valid": meta.get("json_adherence"),
+                    "hallucination_ok": meta.get("hallucination_ok"),
+                    "memory_kb": meta.get("memory_kb"),
+                    "token_count": meta.get("token_count"),
+                }
+            )
+        final_meta = {"slide_metrics": slide_metrics}
         if generate_video and video_paths:
             ordered_paths = [
                 video_paths[slide_num]
@@ -272,14 +365,22 @@ async def process_ppt_job(
             output_dir = settings.storage_output_dir / job_id
             output_dir.mkdir(parents=True, exist_ok=True)
             output_path = output_dir / "final.mp4"
-            job_manager.update_progress(job_id, 80, current_step="Stitching final video")
+            await job_manager.update_progress(job_id, 80, current_step="Stitching final video")
             loop = asyncio.get_event_loop()
             final_video_path = await loop.run_in_executor(
                 None, stitch_videos, ordered_paths, str(output_path)
             )
-            job_manager.update_progress(job_id, 100, current_step="Processing completed")
+            redis_manager.archive_benchmark_data(job_id, model_name, final_meta)
+            job_logger.info(
+                f"Benchmark archived for model {model_name} on job {job_id}"
+            )
+            await job_manager.update_progress(job_id, 100, current_step="Processing completed")
         else:
-            job_manager.update_progress(job_id, 100, current_step="Processing completed")
+            redis_manager.archive_benchmark_data(job_id, model_name, final_meta)
+            job_logger.info(
+                f"Benchmark archived for model {model_name} on job {job_id}"
+            )
+            await job_manager.update_progress(job_id, 100, current_step="Processing completed")
 
         end_time = datetime.utcnow()
         processing_time = (end_time - start_time).total_seconds()
@@ -295,6 +396,7 @@ async def process_ppt_job(
             processing_time_seconds=processing_time,
             cache_hits=cache_hits,
             cache_misses=cache_misses,
+            slide_metrics=slide_metrics,
             created_at=start_time,
             completed_at=end_time,
         )

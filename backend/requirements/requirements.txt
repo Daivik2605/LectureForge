@@ -43,7 +43,7 @@ python-dotenv>=1.0.0
 # ===================
 # Optional: Redis (for production caching)
 # ===================
-# redis>=5.0.0
+redis>=5.0.0
 # aioredis>=2.0.0
 
 # ===================

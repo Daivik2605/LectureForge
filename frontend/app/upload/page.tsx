@@ -53,7 +53,9 @@ export default function UploadPage() {
       });
 
       toast.success('Processing started!');
-      router.push(`/processing/${result.job_id}`);
+      setTimeout(() => {
+        router.push(`/processing/${result.job_id}`);
+      }, 1500);
     } catch (error: any) {
       console.error('Upload error:', error);
       toast.error(error?.message || 'Upload failed');

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import time
 from time import perf_counter
 from typing import Any
@@ -17,6 +16,7 @@ from langchain_core.prompts import PromptTemplate
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.exceptions import LLMConnectionError, LLMGenerationError
+from app.services.llm_providers import LLMProviderFactory
 
 logger = get_logger(__name__)
 
@@ -29,69 +29,6 @@ PROFESSOR_SYSTEM_PROMPT = (
     "Teach with clarity, structure, and confidence. "
     "Use narrative transitions so the lesson feels cohesive across slides."
 )
-
-
-def _get_llm_endpoint(base_url: str) -> tuple[str, bool]:
-    base = base_url.rstrip("/")
-    if base.endswith("/chat/completions"):
-        return base, True
-    if base.endswith("/api/chat"):
-        return base, False
-    if base.endswith("/v1"):
-        return f"{base}/chat/completions", True
-    if base.endswith("/api"):
-        return f"{base}/chat", False
-    if "/v1" in base:
-        return f"{base}/chat/completions", True
-    return f"{base}/api/chat", False
-
-
-def _build_headers(is_openai: bool) -> dict[str, str]:
-    headers = {"Content-Type": "application/json"}
-    if is_openai:
-        api_key = os.getenv("OPENAI_API_KEY")
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-    return headers
-
-
-def _build_payload(
-    messages: list[dict[str, str]],
-    temperature: float,
-    max_tokens: int,
-    is_openai: bool,
-) -> dict[str, Any]:
-    model = settings.ollama_model or "llama3.1:8b-instruct-q4"
-    payload: dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "stream": False,
-    }
-    if is_openai:
-        payload["temperature"] = temperature
-        payload["max_tokens"] = max_tokens
-    else:
-        payload["options"] = {
-            "temperature": temperature,
-            "num_predict": max_tokens,
-        }
-    return payload
-
-
-def _extract_chat_content(payload: dict[str, Any], is_openai: bool) -> str:
-    if is_openai:
-        choices = payload.get("choices", [])
-        if choices and isinstance(choices, list):
-            message = choices[0].get("message", {})
-            content = message.get("content")
-            if isinstance(content, str):
-                return content
-    else:
-        message = payload.get("message", {})
-        content = message.get("content")
-        if isinstance(content, str):
-            return content
-    raise ValueError("No message content found in LLM response")
 
 
 async def _post_with_retries(
@@ -164,24 +101,18 @@ async def chat_completion_async(
     messages: list[dict[str, str]],
     temperature: float,
     max_tokens: int = DEFAULT_MAX_TOKENS,
-) -> str:
-    endpoint, is_openai = _get_llm_endpoint(settings.ollama_base_url)
-    headers = _build_headers(is_openai)
-    payload = _build_payload(messages, temperature, max_tokens, is_openai)
-    response = await _post_with_retries(endpoint, payload, headers)
-    return _extract_chat_content(response.json(), is_openai)
+) -> dict[str, Any]:
+    provider = LLMProviderFactory.get_provider(settings.ollama_model)
+    return await provider.generate_narration(messages, temperature, max_tokens)
 
 
 def chat_completion_sync(
     messages: list[dict[str, str]],
     temperature: float,
     max_tokens: int = DEFAULT_MAX_TOKENS,
-) -> str:
-    endpoint, is_openai = _get_llm_endpoint(settings.ollama_base_url)
-    headers = _build_headers(is_openai)
-    payload = _build_payload(messages, temperature, max_tokens, is_openai)
-    response = _post_with_retries_sync(endpoint, payload, headers)
-    return _extract_chat_content(response.json(), is_openai)
+) -> dict[str, Any]:
+    provider = LLMProviderFactory.get_provider(settings.ollama_model)
+    return provider.generate_narration_sync(messages, temperature, max_tokens)
 
 
 def _messages_from_prompt(prompt: str, system_prompt: str | None = None) -> list[dict[str, str]]:
@@ -331,9 +262,9 @@ async def batch_summarize_pages(
     pages: list[dict[str, Any]],
     language: str,
     max_words: int,
-) -> dict[str, dict[str, Any]]:
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     if not pages:
-        return {}
+        return {}, {"json_adherence": True, "llm_metrics": {}}
 
     payload_parts = []
     for page in pages:
@@ -343,6 +274,7 @@ async def batch_summarize_pages(
     pages_payload = "\n\n".join(payload_parts)
 
     start = perf_counter()
+    json_adherence = True
     try:
         prompt = SUMMARY_PROMPT.format(
             pages_payload=pages_payload,
@@ -353,17 +285,29 @@ async def batch_summarize_pages(
             _messages_from_prompt(prompt),
             temperature=settings.narration_temperature,
         )
-        parsed = _normalize_summary_payload(json.loads(_extract_json_object(str(result))), max_words)
+        parsed = _normalize_summary_payload(
+            json.loads(_extract_json_object(str(result["text"]))), max_words
+        )
         elapsed = perf_counter() - start
         logger.info(
             "LLM summary batch completed",
             extra={"pages": len(pages), "elapsed_seconds": round(elapsed, 2)},
         )
-        return parsed
+        return parsed, {
+            "json_adherence": json_adherence,
+            "llm_metrics": {
+                "ttft": result.get("ttft"),
+                "tps": result.get("tps"),
+                "duration": result.get("duration"),
+                "memory_kb": result.get("memory_kb"),
+                "token_count": result.get("token_count"),
+            },
+        }
     except ConnectionError as exc:
         logger.error(f"Failed to connect to Ollama: {exc}")
         raise LLMConnectionError("Ollama") from exc
     except Exception as exc:
+        json_adherence = False
         logger.warning(f"Summary batch parsing failed, retrying strictly: {exc}")
         try:
             strict_prefix = (
@@ -378,13 +322,24 @@ async def batch_summarize_pages(
                 _messages_from_prompt(prompt),
                 temperature=settings.narration_temperature,
             )
-            parsed = _normalize_summary_payload(json.loads(_extract_json_object(str(result))), max_words)
+            parsed = _normalize_summary_payload(
+                json.loads(_extract_json_object(str(result["text"]))), max_words
+            )
             elapsed = perf_counter() - start
             logger.info(
                 "LLM summary batch completed (retry)",
                 extra={"pages": len(pages), "elapsed_seconds": round(elapsed, 2)},
             )
-            return parsed
+            return parsed, {
+                "json_adherence": json_adherence,
+                "llm_metrics": {
+                    "ttft": result.get("ttft"),
+                    "tps": result.get("tps"),
+                    "duration": result.get("duration"),
+                    "memory_kb": result.get("memory_kb"),
+                    "token_count": result.get("token_count"),
+                },
+            }
         except Exception as retry_exc:
             logger.error(f"Summary batch retry failed: {retry_exc}")
             raise LLMGenerationError("summary_batch") from retry_exc
@@ -393,9 +348,9 @@ async def batch_summarize_pages(
 async def batch_generate_mcqs(
     pages: list[dict[str, Any]],
     language: str,
-) -> dict[str, list[dict[str, Any]]]:
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
     if not pages:
-        return {}
+        return {}, {"json_adherence": True, "llm_metrics": {}}
 
     payload_parts = []
     for page in pages:
@@ -405,6 +360,7 @@ async def batch_generate_mcqs(
     pages_payload = "\n\n".join(payload_parts)
 
     start = perf_counter()
+    json_adherence = True
     try:
         prompt = MCQ_PROMPT.format(
             pages_payload=pages_payload,
@@ -414,17 +370,27 @@ async def batch_generate_mcqs(
             _messages_from_prompt(prompt),
             temperature=settings.qa_temperature,
         )
-        parsed = _normalize_mcq_payload(json.loads(_extract_json_object(str(result))))
+        parsed = _normalize_mcq_payload(json.loads(_extract_json_object(str(result["text"]))))
         elapsed = perf_counter() - start
         logger.info(
             "LLM MCQ batch completed",
             extra={"pages": len(pages), "elapsed_seconds": round(elapsed, 2)},
         )
-        return parsed
+        return parsed, {
+            "json_adherence": json_adherence,
+            "llm_metrics": {
+                "ttft": result.get("ttft"),
+                "tps": result.get("tps"),
+                "duration": result.get("duration"),
+                "memory_kb": result.get("memory_kb"),
+                "token_count": result.get("token_count"),
+            },
+        }
     except ConnectionError as exc:
         logger.error(f"Failed to connect to Ollama: {exc}")
         raise LLMConnectionError("Ollama") from exc
     except Exception as exc:
+        json_adherence = False
         logger.warning(f"MCQ batch parsing failed, retrying strictly: {exc}")
         try:
             strict_prefix = (
@@ -438,13 +404,22 @@ async def batch_generate_mcqs(
                 _messages_from_prompt(prompt),
                 temperature=settings.qa_temperature,
             )
-            parsed = _normalize_mcq_payload(json.loads(_extract_json_object(str(result))))
+            parsed = _normalize_mcq_payload(json.loads(_extract_json_object(str(result["text"]))))
             elapsed = perf_counter() - start
             logger.info(
                 "LLM MCQ batch completed (retry)",
                 extra={"pages": len(pages), "elapsed_seconds": round(elapsed, 2)},
             )
-            return parsed
+            return parsed, {
+                "json_adherence": json_adherence,
+                "llm_metrics": {
+                    "ttft": result.get("ttft"),
+                    "tps": result.get("tps"),
+                    "duration": result.get("duration"),
+                    "memory_kb": result.get("memory_kb"),
+                    "token_count": result.get("token_count"),
+                },
+            }
         except Exception as retry_exc:
             logger.error(f"MCQ batch retry failed: {retry_exc}")
             raise LLMGenerationError("mcq_batch") from retry_exc

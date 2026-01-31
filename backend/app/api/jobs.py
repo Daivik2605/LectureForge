@@ -2,7 +2,7 @@
 Jobs API - Endpoints for job status and results.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pathlib import Path
 
@@ -16,6 +16,22 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
 
 
+def _resolve_public_url(request: Request, file_path: str | None) -> str | None:
+    if not file_path:
+        return None
+    if file_path.startswith("http://") or file_path.startswith("https://"):
+        return file_path
+    normalized = file_path.replace("\\", "/")
+    storage_dir = str(settings.storage_dir).replace("\\", "/")
+    if normalized.startswith(storage_dir):
+        relative = normalized[len(storage_dir):].lstrip("/")
+        return f"{request.base_url}storage/{relative}"
+    if "/storage/" in normalized:
+        relative = normalized.split("/storage/", 1)[-1]
+        return f"{request.base_url}storage/{relative}"
+    return f"{request.base_url}storage/{normalized.lstrip('/')}"
+
+
 @router.get("/{job_id}/status", response_model=JobStatus)
 async def get_job_status(job_id: str):
     """
@@ -27,14 +43,15 @@ async def get_job_status(job_id: str):
     - Per-slide progress breakdown
     """
     try:
-        status = job_manager.get_job_status(job_id)
+        # Fixed
+        status = await job_manager.get_job_status(job_id)
         return status
     except JobNotFoundError:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
 
 
 @router.get("/{job_id}/result", response_model=JobResult)
-async def get_job_result(job_id: str):
+async def get_job_result(job_id: str, request: Request):
     """
     Get the complete result of a finished job.
     
@@ -58,10 +75,20 @@ async def get_job_result(job_id: str):
             )
         
         result = job_manager.get_job_result(job_id)
-        return result
+        payload = result.model_dump()
+        payload["video_url"] = _resolve_public_url(request, result.final_video_path)
+        return payload
         
     except JobNotFoundError:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+
+@router.get("/{job_id}", response_model=JobResult)
+async def get_job(job_id: str, request: Request):
+    """
+    Get the complete result of a finished job.
+    """
+    return await get_job_result(job_id, request)
 
 
 @router.post("/{job_id}/cancel")

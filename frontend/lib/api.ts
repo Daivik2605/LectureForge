@@ -1,6 +1,6 @@
-export type JobState = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
-export type SlideState = 'pending' | 'processing' | 'completed' | 'failed';
-
+// Look for this in frontend/lib/api.ts or similar
+export type JobStatus = 'Queued' | 'Processing' | 'Completed' | 'Failed' | string;
+  
 export interface SlideProgress {
   slide_number: number;
   narration: SlideState;
@@ -71,6 +71,7 @@ export interface UploadResponse {
   job_id: string;
   status: JobState;
   message: string;
+  ready_at?: number;
 }
 
 export interface UploadParams {
@@ -160,7 +161,11 @@ export const uploadPresentation = async (params: UploadParams): Promise<UploadRe
     throw new Error(await parseError(response, 'Upload failed'));
   }
 
-  return response.json();
+  const payload = await response.json();
+  return {
+    ...payload,
+    ready_at: Date.now() + 1000,
+  };
 };
 
 export const getJobStatus = async (jobId: string): Promise<JobStatus> => {
